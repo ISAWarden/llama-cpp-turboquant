@@ -363,7 +363,7 @@ struct common_params_speculative {
     }
 
     bool has_mtp() const {
-        return type == COMMON_SPECULATIVE_TYPE_MTP && mtp.model != nullptr;
+        return std::find(types.begin(), types.end(), COMMON_SPECULATIVE_TYPE_MTP) != types.end() && mtp.model != nullptr;
     }
 };
 

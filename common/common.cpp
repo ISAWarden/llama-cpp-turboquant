@@ -1502,7 +1502,7 @@ struct llama_context_params common_context_params_to_llama(const common_params &
     cparams.n_ctx             = params.n_ctx;
     cparams.n_seq_max         = params.n_parallel;
     {
-        const bool has_spec = (params.speculative.type != COMMON_SPECULATIVE_TYPE_NONE)
+        const bool has_spec = (params.speculative.types.size() > 1 || params.speculative.types[0] != COMMON_SPECULATIVE_TYPE_NONE)
                               || params.speculative.has_dft();
         cparams.n_rs_seq = has_spec ? (uint32_t) params.speculative.draft.n_max : 0u;
     }
