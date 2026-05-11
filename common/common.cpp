@@ -1502,9 +1502,34 @@ struct llama_context_params common_context_params_to_llama(const common_params &
     cparams.n_ctx             = params.n_ctx;
     cparams.n_seq_max         = params.n_parallel;
     {
-        const bool has_spec = (params.speculative.type != COMMON_SPECULATIVE_TYPE_NONE)
-                              || params.speculative.has_dft();
-        cparams.n_rs_seq = has_spec ? (uint32_t) params.speculative.draft.n_max : 0u;
+        uint32_t n_rs_seq = 0;
+
+        if (params.speculative.has_dft()) {
+            n_rs_seq = std::max(n_rs_seq, (uint32_t) params.speculative.draft.n_max);
+        }
+
+        switch (params.speculative.type) {
+            case COMMON_SPECULATIVE_TYPE_DRAFT:
+            case COMMON_SPECULATIVE_TYPE_EAGLE3:
+            case COMMON_SPECULATIVE_TYPE_MTP:
+                n_rs_seq = std::max(n_rs_seq, (uint32_t) params.speculative.draft.n_max);
+                break;
+            case COMMON_SPECULATIVE_TYPE_NGRAM_SIMPLE:
+            case COMMON_SPECULATIVE_TYPE_NGRAM_MAP_K:
+            case COMMON_SPECULATIVE_TYPE_NGRAM_MAP_K4V:
+                n_rs_seq = std::max(n_rs_seq, (uint32_t) params.speculative.ngram_simple.size_m);
+                break;
+            case COMMON_SPECULATIVE_TYPE_NGRAM_MOD:
+                n_rs_seq = std::max(n_rs_seq, (uint32_t) params.speculative.ngram_mod.n_max);
+                break;
+            case COMMON_SPECULATIVE_TYPE_NGRAM_CACHE:
+                n_rs_seq = std::max(n_rs_seq, (uint32_t) params.speculative.draft.n_max);
+                break;
+            case COMMON_SPECULATIVE_TYPE_NONE:
+                break;
+        }
+
+        cparams.n_rs_seq = n_rs_seq;
     }
     cparams.n_batch           = params.n_batch;
     cparams.n_ubatch          = params.n_ubatch;
