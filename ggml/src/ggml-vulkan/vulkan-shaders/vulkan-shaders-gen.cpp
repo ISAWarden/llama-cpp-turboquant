@@ -690,13 +690,6 @@ void process_shaders() {
                 }
             }
             }
-
-            string_to_spv("flash_attn_f32_f16", "flash_attn.comp",
-                merge_maps(fa_base_dict, {{"Q_TYPE", "float"}, {"D_TYPE", "float"}, {"D_TYPEV4", "vec4"}}), fp16, false, false, f16acc);
-#if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
-            string_to_spv("flash_attn_f32_f16", "flash_attn.comp",
-                merge_maps(fa_base_dict, {{"Q_TYPE", "float"}, {"D_TYPE", "float"}, {"D_TYPEV4", "vec4"}, {"MMQ", "1"}, {"FA_MMQ_MIXED", "1"}}), fp16, false, false, f16acc, "_int8");
-#endif
         }
     }
 
