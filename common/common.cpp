@@ -1526,6 +1526,7 @@ struct llama_context_params common_context_params_to_llama(const common_params &
                 n_rs_seq = std::max(n_rs_seq, (uint32_t) params.speculative.draft.n_max);
                 break;
             case COMMON_SPECULATIVE_TYPE_NONE:
+            case COMMON_SPECULATIVE_TYPE_COUNT:
                 break;
         }
 
