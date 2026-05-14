@@ -650,10 +650,10 @@ void process_shaders() {
 
             if (fp16) {
 #if defined(GGML_VULKAN_COOPMAT2_GLSLC_SUPPORT)
-                string_to_spv("flash_attn_f32_f16_mixed", "flash_attn_cm2.comp",
+                string_to_spv("flash_attn_f32_f16", "flash_attn_cm2.comp",
                     merge_maps(fa_base_dict, {{"Q_TYPE", "float"}, {"D_TYPE", "float"}, {"D_TYPEV4", "vec4"}}), fp16, false, true, f16acc);
 #endif
-            }
+
 
             for (const auto& tname : type_names) {
                 if (tname == "bf16") continue;
@@ -688,6 +688,7 @@ void process_shaders() {
                     }
 #endif
                 }
+            }
             }
         }
     }
