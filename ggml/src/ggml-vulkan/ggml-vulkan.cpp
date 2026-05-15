@@ -3884,30 +3884,30 @@ static void ggml_vk_load_shaders(vk_device & device) {
         CREATE_FA(GGML_TYPE_TURBO3_0, turbo3_0, FA_SCALAR, )
         CREATE_FA(GGML_TYPE_TURBO4_0, turbo4_0, FA_SCALAR, )
     } else {
-        CREATE_FA(GGML_TYPE_F32, f32, FA_SCALAR, _fp32)
-        CREATE_FA(GGML_TYPE_F16, f16, FA_SCALAR, _fp32)
+        CREATE_FA(GGML_TYPE_F32, f32, FA_SCALAR, )
+        CREATE_FA(GGML_TYPE_F16, f16, FA_SCALAR, )
 
 #if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
         if (device->integer_dot_product && device->subgroup_clustered) {
-            CREATE_FA(GGML_TYPE_Q4_0, q4_0, FA_SCALAR, _fp32_int8)
-            CREATE_FA(GGML_TYPE_Q8_0, q8_0, FA_SCALAR, _fp32_int8)
-            CREATE_FA(GGML_TYPE_Q4_1, q4_1, FA_SCALAR, _fp32_int8)
-            CREATE_FA(GGML_TYPE_Q5_0, q5_0, FA_SCALAR, _fp32_int8)
-            CREATE_FA(GGML_TYPE_Q5_1, q5_1, FA_SCALAR, _fp32_int8)
-            CREATE_FA(GGML_TYPE_IQ4_NL, iq4_nl, FA_SCALAR, _fp32_int8)
+            CREATE_FA(GGML_TYPE_Q4_0, q4_0, FA_SCALAR, _int8)
+            CREATE_FA(GGML_TYPE_Q8_0, q8_0, FA_SCALAR, _int8)
+            CREATE_FA(GGML_TYPE_Q4_1, q4_1, FA_SCALAR, _int8)
+            CREATE_FA(GGML_TYPE_Q5_0, q5_0, FA_SCALAR, _int8)
+            CREATE_FA(GGML_TYPE_Q5_1, q5_1, FA_SCALAR, _int8)
+            CREATE_FA(GGML_TYPE_IQ4_NL, iq4_nl, FA_SCALAR, _int8)
         } else
 #endif
         {
-            CREATE_FA(GGML_TYPE_Q4_0, q4_0, FA_SCALAR, _fp32)
-            CREATE_FA(GGML_TYPE_Q8_0, q8_0, FA_SCALAR, _fp32)
-            CREATE_FA(GGML_TYPE_Q4_1, q4_1, FA_SCALAR, _fp32)
-            CREATE_FA(GGML_TYPE_Q5_0, q5_0, FA_SCALAR, _fp32)
-            CREATE_FA(GGML_TYPE_Q5_1, q5_1, FA_SCALAR, _fp32)
-            CREATE_FA(GGML_TYPE_IQ4_NL, iq4_nl, FA_SCALAR, _fp32)
+            CREATE_FA(GGML_TYPE_Q4_0, q4_0, FA_SCALAR, )
+            CREATE_FA(GGML_TYPE_Q8_0, q8_0, FA_SCALAR, )
+            CREATE_FA(GGML_TYPE_Q4_1, q4_1, FA_SCALAR, )
+            CREATE_FA(GGML_TYPE_Q5_0, q5_0, FA_SCALAR, )
+            CREATE_FA(GGML_TYPE_Q5_1, q5_1, FA_SCALAR, )
+            CREATE_FA(GGML_TYPE_IQ4_NL, iq4_nl, FA_SCALAR, )
         }
-        CREATE_FA(GGML_TYPE_TURBO2_0, turbo2_0, FA_SCALAR, _fp32)
-        CREATE_FA(GGML_TYPE_TURBO3_0, turbo3_0, FA_SCALAR, _fp32)
-        CREATE_FA(GGML_TYPE_TURBO4_0, turbo4_0, FA_SCALAR, _fp32)
+        CREATE_FA(GGML_TYPE_TURBO2_0, turbo2_0, FA_SCALAR, )
+        CREATE_FA(GGML_TYPE_TURBO3_0, turbo3_0, FA_SCALAR, )
+        CREATE_FA(GGML_TYPE_TURBO4_0, turbo4_0, FA_SCALAR, )
     }
 #if defined(VK_KHR_cooperative_matrix) && defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
     if (device->coopmat1_fa_support) {
@@ -3937,28 +3937,28 @@ static void ggml_vk_load_shaders(vk_device & device) {
                     if (aligned) {                                                                                    \
                         if (f32acc) {                                                                                 \
                             ggml_vk_create_pipeline(device, fa.second, "flash_attn_f32_f16_mixed_aligned_f32acc_cm2", \
-                                                    flash_attn_f32_f16_mixed_cm2_len,                                 \
-                                                    flash_attn_f32_f16_mixed_cm2_data, "main", 7,                     \
+                                                    flash_attn_f32_f16_cm2_len,                                 \
+                                                    flash_attn_f32_f16_cm2_data, "main", 7,                     \
                                                     sizeof(vk_flash_attn_push_constants), { Br, 1, 1 },               \
                                                     get_fa_spec_constants(fa.first), Bc, true, false, 0);             \
                         } else {                                                                                      \
                             ggml_vk_create_pipeline(device, fa.second, "flash_attn_f32_f16_mixed_aligned_f16acc_cm2", \
-                                                    flash_attn_f32_f16_mixed_f16acc_cm2_len,                          \
-                                                    flash_attn_f32_f16_mixed_f16acc_cm2_data, "main", 7,              \
+                                                    flash_attn_f32_f16_f16acc_cm2_len,                          \
+                                                    flash_attn_f32_f16_f16acc_cm2_data, "main", 7,              \
                                                     sizeof(vk_flash_attn_push_constants), { Br, 1, 1 },               \
                                                     get_fa_spec_constants(fa.first), Bc, true, false, 0);             \
                         }                                                                                             \
                     } else {                                                                                          \
                         if (f32acc) {                                                                                 \
                             ggml_vk_create_pipeline(device, fa.second, "flash_attn_f32_f16_mixed_f32acc_cm2",         \
-                                                    flash_attn_f32_f16_mixed_cm2_len,                                 \
-                                                    flash_attn_f32_f16_mixed_cm2_data, "main", 7,                     \
+                                                    flash_attn_f32_f16_cm2_len,                                 \
+                                                    flash_attn_f32_f16_cm2_data, "main", 7,                     \
                                                     sizeof(vk_flash_attn_push_constants), { Br, 1, 1 },               \
                                                     get_fa_spec_constants(fa.first), 1, true, false, 0);              \
                         } else {                                                                                      \
                             ggml_vk_create_pipeline(device, fa.second, "flash_attn_f32_f16_mixed_f16acc_cm2",         \
-                                                    flash_attn_f32_f16_mixed_f16acc_cm2_len,                          \
-                                                    flash_attn_f32_f16_mixed_f16acc_cm2_data, "main", 7,              \
+                                                    flash_attn_f32_f16_f16acc_cm2_len,                          \
+                                                    flash_attn_f32_f16_f16acc_cm2_data, "main", 7,              \
                                                     sizeof(vk_flash_attn_push_constants), { Br, 1, 1 },               \
                                                     get_fa_spec_constants(fa.first), 1, true, false, 0);              \
                         }                                                                                             \
