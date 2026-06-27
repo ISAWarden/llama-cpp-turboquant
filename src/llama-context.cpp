@@ -51,6 +51,7 @@ llama_context::llama_context(
 
     cparams.n_threads        = params.n_threads;
     cparams.n_threads_batch  = params.n_threads_batch;
+    cparams.moe_expert_boost = params.moe_expert_boost;
     cparams.yarn_ext_factor  = params.yarn_ext_factor  >= 0.0f ? params.yarn_ext_factor  : hparams.yarn_ext_factor;
     cparams.yarn_attn_factor = params.yarn_attn_factor >= 0.0f ? params.yarn_attn_factor : hparams.yarn_attn_factor;
     cparams.yarn_beta_fast   = params.yarn_beta_fast   >= 0.0f ? params.yarn_beta_fast   : hparams.yarn_beta_fast;
@@ -420,6 +421,7 @@ void llama_context::sched_reserve() {
     gf_res_reserve.reset(new llm_graph_result(max_nodes));
 
     sched.reset(ggml_backend_sched_new(backend_ptrs.data(), backend_buft.data(), backend_ptrs.size(), max_nodes, cparams.pipeline_parallel, cparams.op_offload));
+    ggml_backend_sched_set_moe_expert_boost(sched.get(), cparams.moe_expert_boost);
 
     llama_memory_context_ptr mctx;
     if (memory) {
@@ -574,6 +576,7 @@ void llama_context::sched_reserve() {
                 LLAMA_LOG_WARN("%s: compute buffer allocation failed, retrying without pipeline parallelism\n", __func__);
                 cparams.pipeline_parallel = false;
                 sched.reset(ggml_backend_sched_new(backend_ptrs.data(), backend_buft.data(), backend_ptrs.size(), max_nodes, false, cparams.op_offload));
+                ggml_backend_sched_set_moe_expert_boost(sched.get(), cparams.moe_expert_boost);
                 gf = graph_reserve(n_tokens, n_seqs, n_tokens, mctx.get());
             }
             if (!gf) {
@@ -3220,6 +3223,7 @@ llama_context_params llama_context_default_params() {
         /*.n_ubatch                    =*/ 512,
         /*.n_seq_max                   =*/ 1,
         /*.n_rs_seq                    =*/ 0,
+        /*.moe_expert_boost            =*/ 0,
         /*.n_threads                   =*/ GGML_DEFAULT_N_THREADS, // TODO: better default
         /*.n_threads_batch             =*/ GGML_DEFAULT_N_THREADS,
         /*.rope_scaling_type           =*/ LLAMA_ROPE_SCALING_TYPE_UNSPECIFIED,

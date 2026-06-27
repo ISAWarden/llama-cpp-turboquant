@@ -51,6 +51,7 @@ test parameters:
   --poll <0...100>                          (default: 50)
   -ngl, --n-gpu-layers <n>                  (default: 99)
   -ncmoe, --n-cpu-moe <n>                   (default: 0)
+  --moe-expert-boost <n>                    MoE expert cache budget in MiB (default: 0)
   -sm, --split-mode <none|layer|row>        (default: layer)
   -mg, --main-gpu <i>                       (default: 0)
   -nkvo, --no-kv-offload <0|1>              (default: 0)

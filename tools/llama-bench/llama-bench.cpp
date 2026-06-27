@@ -334,6 +334,7 @@ struct cmd_params {
     std::vector<int>                 poll;
     std::vector<int>                 n_gpu_layers;
     std::vector<int>                 n_cpu_moe;
+    std::vector<int>                 moe_expert_boost;
     std::vector<llama_split_mode>    split_mode;
     std::vector<int>                 main_gpu;
     std::vector<bool>                no_kv_offload;
@@ -378,6 +379,7 @@ static const cmd_params cmd_params_defaults = {
     /* poll                 */ { 50 },
     /* n_gpu_layers         */ { 99 },
     /* n_cpu_moe            */ { 0 },
+    /* moe_expert_boost     */ { 0 },
     /* split_mode           */ { LLAMA_SPLIT_MODE_LAYER },
     /* main_gpu             */ { 0 },
     /* no_kv_offload        */ { false },
@@ -448,6 +450,7 @@ static void print_usage(int /* argc */, char ** argv) {
     printf("  --poll <0...100>                            (default: %s)\n", join(cmd_params_defaults.poll, ",").c_str());
     printf("  -ngl, --n-gpu-layers <n>                    (default: %s)\n", join(cmd_params_defaults.n_gpu_layers, ",").c_str());
     printf("  -ncmoe, --n-cpu-moe <n>                     (default: %s)\n", join(cmd_params_defaults.n_cpu_moe, ",").c_str());
+    printf("  --moe-expert-boost <n>                      MoE expert cache budget in MiB (default: %s)\n", join(cmd_params_defaults.moe_expert_boost, ",").c_str());
     printf("  -sm, --split-mode <none|layer|row|tensor>   (default: %s)\n", join(transform_to_str(cmd_params_defaults.split_mode, split_mode_str), ",").c_str());
     printf("  -mg, --main-gpu <i>                         (default: %s)\n", join(cmd_params_defaults.main_gpu, ",").c_str());
     printf("  -nkvo, --no-kv-offload <0|1>                (default: %s)\n", join(cmd_params_defaults.no_kv_offload, ",").c_str());
@@ -728,6 +731,22 @@ static cmd_params parse_cmd_params(int argc, char ** argv) {
                 }
                 auto p = parse_int_range(argv[i]);
                 params.n_cpu_moe.insert(params.n_cpu_moe.end(), p.begin(), p.end());
+            } else if (arg == "--moe-expert-boost" || arg == "--moe-expert-cache") {
+                if (++i >= argc) {
+                    invalid_param = true;
+                    break;
+                }
+                auto p = parse_int_range(argv[i]);
+                for (const auto value : p) {
+                    if (value < 0) {
+                        invalid_param = true;
+                        break;
+                    }
+                }
+                if (invalid_param) {
+                    break;
+                }
+                params.moe_expert_boost.insert(params.moe_expert_boost.end(), p.begin(), p.end());
             } else if (llama_supports_rpc() && (arg == "-rpc" || arg == "--rpc")) {
                 if (++i >= argc) {
                     invalid_param = true;
@@ -1071,6 +1090,9 @@ static cmd_params parse_cmd_params(int argc, char ** argv) {
     if (params.n_cpu_moe.empty()) {
         params.n_cpu_moe = cmd_params_defaults.n_cpu_moe;
     }
+    if (params.moe_expert_boost.empty()) {
+        params.moe_expert_boost = cmd_params_defaults.moe_expert_boost;
+    }
     if (params.split_mode.empty()) {
         params.split_mode = cmd_params_defaults.split_mode;
     }
@@ -1144,6 +1166,7 @@ struct cmd_params_instance {
     int                poll;
     int                n_gpu_layers;
     int                n_cpu_moe;
+    int                moe_expert_boost;
     llama_split_mode   split_mode;
     int                main_gpu;
     bool               no_kv_offload;
@@ -1228,6 +1251,7 @@ struct cmd_params_instance {
         cparams.n_ctx           = n_prompt + n_gen + n_depth;
         cparams.n_batch         = n_batch;
         cparams.n_ubatch        = n_ubatch;
+        cparams.moe_expert_boost = moe_expert_boost;
         cparams.type_k          = type_k;
         cparams.type_v          = type_v;
         cparams.offload_kqv     = !no_kv_offload;
@@ -1250,6 +1274,7 @@ static std::vector<cmd_params_instance> get_cmd_params_instances(const cmd_param
     for (const auto & fpc : params.fit_params_min_ctx)
     for (const auto & nl : params.n_gpu_layers)
     for (const auto & ncmoe : params.n_cpu_moe)
+    for (const auto & meb : params.moe_expert_boost)
     for (const auto & sm : params.split_mode)
     for (const auto & mg : params.main_gpu)
     for (const auto & devs : params.devices)
@@ -1290,6 +1315,7 @@ static std::vector<cmd_params_instance> get_cmd_params_instances(const cmd_param
                 /* .poll         = */ pl,
                 /* .n_gpu_layers = */ nl,
                 /* .n_cpu_moe    = */ ncmoe,
+                /* .moe_expert_boost = */ meb,
                 /* .split_mode   = */ sm,
                 /* .main_gpu     = */ mg,
                 /* .no_kv_offload= */ nkvo,
@@ -1327,6 +1353,7 @@ static std::vector<cmd_params_instance> get_cmd_params_instances(const cmd_param
                 /* .poll         = */ pl,
                 /* .n_gpu_layers = */ nl,
                 /* .n_cpu_moe    = */ ncmoe,
+                /* .moe_expert_boost = */ meb,
                 /* .split_mode   = */ sm,
                 /* .main_gpu     = */ mg,
                 /* .no_kv_offload= */ nkvo,
@@ -1364,6 +1391,7 @@ static std::vector<cmd_params_instance> get_cmd_params_instances(const cmd_param
                 /* .poll         = */ pl,
                 /* .n_gpu_layers = */ nl,
                 /* .n_cpu_moe    = */ ncmoe,
+                /* .moe_expert_boost = */ meb,
                 /* .split_mode   = */ sm,
                 /* .main_gpu     = */ mg,
                 /* .no_kv_offload= */ nkvo,
@@ -1406,6 +1434,7 @@ struct test {
     ggml_type                type_v;
     int                      n_gpu_layers;
     int                      n_cpu_moe;
+    int                      moe_expert_boost;
     llama_split_mode         split_mode;
     int                      main_gpu;
     bool                     no_kv_offload;
@@ -1446,6 +1475,7 @@ struct test {
         type_v         = inst.type_v;
         n_gpu_layers   = inst.n_gpu_layers;
         n_cpu_moe      = inst.n_cpu_moe;
+        moe_expert_boost = inst.moe_expert_boost;
         split_mode     = inst.split_mode;
         main_gpu       = inst.main_gpu;
         no_kv_offload  = inst.no_kv_offload;
@@ -1514,7 +1544,7 @@ struct test {
             "build_commit",   "build_number",   "cpu_info",      "gpu_info",       "backends",
             "model_filename", "model_type",     "model_size",    "model_n_params", "n_batch",
             "n_ubatch",       "n_threads",      "cpu_mask",      "cpu_strict",     "poll",
-            "type_k",         "type_v",         "n_gpu_layers",  "n_cpu_moe",      "split_mode",
+            "type_k",         "type_v",         "n_gpu_layers",  "n_cpu_moe",      "moe_expert_boost", "split_mode",
             "main_gpu",       "no_kv_offload",  "flash_attn",    "devices",        "tensor_split",
             "tensor_buft_overrides",            "use_mmap",      "use_direct_io",  "embeddings",
             "no_op_offload",  "no_host",        "fit_target",     "fit_min_ctx",
@@ -1530,7 +1560,7 @@ struct test {
         if (field == "build_number" || field == "n_batch" || field == "n_ubatch" || field == "n_threads" ||
             field == "poll" || field == "model_size" || field == "model_n_params" || field == "n_gpu_layers" ||
             field == "main_gpu" || field == "n_prompt" || field == "n_gen" || field == "n_depth" || field == "avg_ns" ||
-            field == "stddev_ns" || field == "no_op_offload" || field == "n_cpu_moe" ||
+            field == "stddev_ns" || field == "no_op_offload" || field == "n_cpu_moe" || field == "moe_expert_boost" ||
             field == "fit_target" || field == "fit_min_ctx") {
             return INT;
         }
@@ -1600,6 +1630,7 @@ struct test {
                                             ggml_type_name(type_v),
                                             std::to_string(n_gpu_layers),
                                             std::to_string(n_cpu_moe),
+                                            std::to_string(moe_expert_boost),
                                             split_mode_str(split_mode),
                                             std::to_string(main_gpu),
                                             std::to_string(no_kv_offload),
@@ -1880,6 +1911,9 @@ struct markdown_printer : public printer {
         }
         if (params.n_cpu_moe.size() > 1 || params.n_cpu_moe != cmd_params_defaults.n_cpu_moe) {
             fields.emplace_back("n_cpu_moe");
+        }
+        if (params.moe_expert_boost.size() > 1 || params.moe_expert_boost != cmd_params_defaults.moe_expert_boost) {
+            fields.emplace_back("moe_expert_boost");
         }
         if (params.n_threads.size() > 1 || params.n_threads != cmd_params_defaults.n_threads || is_cpu_backend) {
             fields.emplace_back("n_threads");

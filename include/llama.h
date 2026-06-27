@@ -339,6 +339,7 @@ extern "C" {
         uint32_t n_ubatch;          // physical maximum batch size
         uint32_t n_seq_max;         // max number of sequences (i.e. distinct states for recurrent models)
         uint32_t n_rs_seq;          // number of recurrent-state snapshots per seq for rollback (0 = no rollback)
+        uint32_t moe_expert_boost;  // MoE expert residency cache budget in MiB (0 = disabled)
         int32_t  n_threads;         // number of threads to use for generation
         int32_t  n_threads_batch;   // number of threads to use for batch processing
 

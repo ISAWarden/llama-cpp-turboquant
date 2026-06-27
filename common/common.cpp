@@ -1540,6 +1540,7 @@ struct llama_context_params common_context_params_to_llama(const common_params &
     }
     cparams.n_batch           = params.n_batch;
     cparams.n_ubatch          = params.n_ubatch;
+    cparams.moe_expert_boost  = params.moe_expert_boost;
     cparams.n_threads         = params.cpuparams.n_threads;
     cparams.n_threads_batch   = params.cpuparams_batch.n_threads == -1 ?
                                 params.cpuparams.n_threads : params.cpuparams_batch.n_threads;
