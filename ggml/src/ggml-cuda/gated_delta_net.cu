@@ -276,27 +276,28 @@ void ggml_cuda_op_gated_delta_net(ggml_backend_cuda_context & ctx, ggml_tensor *
 
     cudaStream_t stream = ctx.stream();
 
-    const bool keep_intermediates = (((const int32_t *) dst->op_params)[0] != 0);
+    const int  K                  = ggml_get_op_params_i32(dst, 0);
+    const bool keep_intermediates = K != 0;
 
     if (kda) {
         if (keep_intermediates) {
             launch_gated_delta_net<true, true>(q_d, k_d, v_d, g_d, b_d, s_d, dst_d,
                 S_v, H, n_tokens, n_seqs, sq1, sq2, sq3, sv1, sv2, sv3,
-                sb1, sb2, sb3, neqk1, rq3, scale, stream);
+                sb1, sb2, sb3, neqk1, rq3, scale, K, stream);
         } else {
             launch_gated_delta_net<true, false>(q_d, k_d, v_d, g_d, b_d, s_d, dst_d,
                 S_v, H, n_tokens, n_seqs, sq1, sq2, sq3, sv1, sv2, sv3,
-                sb1, sb2, sb3, neqk1, rq3, scale, stream);
+                sb1, sb2, sb3, neqk1, rq3, scale, K, stream);
         }
     } else {
         if (keep_intermediates) {
             launch_gated_delta_net<false, true>(q_d, k_d, v_d, g_d, b_d, s_d, dst_d,
                 S_v, H, n_tokens, n_seqs, sq1, sq2, sq3, sv1, sv2, sv3,
-                sb1, sb2, sb3, neqk1, rq3, scale, stream);
+                sb1, sb2, sb3, neqk1, rq3, scale, K, stream);
         } else {
             launch_gated_delta_net<false, false>(q_d, k_d, v_d, g_d, b_d, s_d, dst_d,
                 S_v, H, n_tokens, n_seqs, sq1, sq2, sq3, sv1, sv2, sv3,
-                sb1, sb2, sb3, neqk1, rq3, scale, stream);
+                sb1, sb2, sb3, neqk1, rq3, scale, K, stream);
         }
     }
 }

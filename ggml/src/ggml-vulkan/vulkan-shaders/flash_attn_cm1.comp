@@ -616,7 +616,7 @@ void main() {
         [[unroll]] for (uint32_t r = 0; r < rows_per_thread; ++r) {
             Of[r][d_local] *= O_TYPE(Lfrcp[r]);
 #if defined(FLOAT_TYPE_MAX)
-            Of[r][d_local] = clamp(Of[r][d_local], -FLOAT_TYPE_MAX, FLOAT_TYPE_MAX);
+            Of[r][d_local] = clamp(Of[r][d_local], O_TYPEV4(-O_TYPE(FLOAT_TYPE_MAX)), O_TYPEV4(O_TYPE(FLOAT_TYPE_MAX)));
 #endif
         }
     }
