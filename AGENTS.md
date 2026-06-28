@@ -1,4 +1,4 @@
-# Instructions for llama-cpp-turboquant
+# Instructions for llama-cpp-isa
 
 This fork is intended for creativity, experimentation, and research. AI-assisted
 development is welcome here, including exploratory prototypes, generated code,

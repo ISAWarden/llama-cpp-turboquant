@@ -673,6 +673,8 @@ void process_shaders() {
             fa_base_dict["ACC_TYPE"] = fp16 && f16acc ? "float16_t" : "float";
             fa_base_dict["ACC_TYPEV2"] = fp16 && f16acc ? "f16vec2" : "vec2";
             fa_base_dict["ACC_TYPEV4"] = fp16 && f16acc ? "f16vec4" : "vec4";
+            fa_base_dict["O_TYPE"] = fp16 && f16acc ? "float16_t" : "float";
+            fa_base_dict["O_TYPEV4"] = fp16 && f16acc ? "f16vec4" : "vec4";
             if (fp16 && f16acc) {
                 fa_base_dict["ACC_TYPE_MAX"] = "float16_t(65504.0)";
             }
@@ -729,6 +731,8 @@ void process_shaders() {
         {"ACC_TYPE",     "float"},
         {"ACC_TYPEV2",   "vec2"},
         {"ACC_TYPEV4",   "vec4"},
+        {"O_TYPE",       "float"},
+        {"O_TYPEV4",     "vec4"},
         {"BFLOAT16",     "1"},
     };
 
