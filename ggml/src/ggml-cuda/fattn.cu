@@ -19,13 +19,14 @@ static void ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1(ggml_backend_cuda_con
     }
 
     if constexpr (ncols2 <= 16) {
-        if ((turing_mma_available(cc) || amd_wmma_available(cc)) && Q->ne[1] <= 16/ncols2) {
+        if (Q->ne[1] <= 16/ncols2) {
             ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, 16/ncols2, ncols2>(ctx, dst);
             return;
         }
     }
 
-    if (ggml_cuda_highest_compiled_arch(cc) == GGML_CUDA_CC_TURING || amd_wmma_available(cc) || Q->ne[1] <= 32/ncols2) {
+    if (Q->ne[1] <= 32/ncols2 || (GGML_CUDA_CC_IS_NVIDIA(cc) && ggml_cuda_highest_compiled_arch(cc) == GGML_CUDA_CC_TURING) ||
+            (GGML_CUDA_CC_IS_AMD(cc) && DKQ > 256)) {
         ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, 32/ncols2, ncols2>(ctx, dst);
         return;
     }
@@ -574,6 +575,12 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
         return BEST_FATTN_KERNEL_MMA_F16;
     }
 
+    const int ncols2_max = Q->ne[0] == 320 ? 32 : ((Q->ne[0] == 576 || Q->ne[0] == 192) ? 16 : 8);
+    int gqa_ratio_eff = 1;
+    while (gqa_ratio % (2*gqa_ratio_eff) == 0 && gqa_ratio_eff < ncols2_max) {
+        gqa_ratio_eff *= 2;
+    }
+
     if (volta_mma_available(cc) && Q->ne[0] != 40 && Q->ne[0] != 72) {
         int gqa_ratio_eff = 1;
         const int ncols2_max = (Q->ne[0] == 576 || Q->ne[0] == 640 || Q->ne[0] == 192) ? 16 : 8;
@@ -631,7 +638,17 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
         if (eff_nq >= (GGML_CUDA_CC_IS_CDNA1(cc) && Q->ne[0] == 64 ? 64 : 128)) {
             return BEST_FATTN_KERNEL_MMA_F16;
         }
-        // Fall through to tile kernel for small effective batch sizes.
+        if ((Q->ne[0] <= 128 && Q->ne[1] * gqa_ratio_eff > 16)) {
+            return BEST_FATTN_KERNEL_MMA_F16;
+        }
+        if ((Q->ne[0] <= 256 && Q->ne[1] * gqa_ratio_eff > 64)) {
+            return BEST_FATTN_KERNEL_MMA_F16;
+        }
+    }
+
+    // AMD WMMA is always faster than the tile kernel if the full tile width of 16 can be utilized.
+    if ((amd_wmma_available(cc) && gqa_opt_applies && Q->ne[0] <= 128) && Q->ne[0] != 40 && Q->ne[0] != 72 && Q->ne[1] * gqa_ratio_eff > 8) {
+        return BEST_FATTN_KERNEL_MMA_F16;
     }
 
     // If there are no tensor cores available, use the generic tile kernel:
@@ -649,6 +666,41 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
         }
     }
     return BEST_FATTN_KERNEL_TILE;
+}
+
+size_t ggml_cuda_flash_attn_ext_get_alloc_size(int device, const ggml_tensor * dst) {
+    GGML_ASSERT(dst->op == GGML_OP_FLASH_ATTN_EXT);
+
+    const ggml_tensor * K = dst->src[1];
+    const ggml_tensor * V = dst->src[2];
+
+    GGML_ASSERT(K != nullptr);
+    GGML_ASSERT(V != nullptr);
+
+    const best_fattn_kernel kernel = ggml_cuda_get_best_fattn_kernel(device, dst);
+
+    bool need_f16_K = false;
+    bool need_f16_V = false;
+
+    switch (kernel) {
+        case BEST_FATTN_KERNEL_TILE:
+        case BEST_FATTN_KERNEL_WMMA_F16:
+        case BEST_FATTN_KERNEL_MMA_F16:
+            need_f16_K = true;
+            need_f16_V = true;
+            break;
+        case BEST_FATTN_KERNEL_VEC:
+            need_f16_K = K->type == GGML_TYPE_F32;
+            need_f16_V = V->type == GGML_TYPE_F32;
+            break;
+        case BEST_FATTN_KERNEL_NONE:
+            break;
+    }
+
+    const ggml_cuda_flash_attn_ext_f16_extra_data f16_extra =
+        ggml_cuda_flash_attn_ext_get_f16_extra_data(dst, need_f16_K, need_f16_V);
+
+    return f16_extra.end - (uintptr_t) dst->data;
 }
 
 void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {

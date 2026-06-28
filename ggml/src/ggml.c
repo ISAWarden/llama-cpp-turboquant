@@ -600,18 +600,15 @@ FILE * ggml_fopen(const char * fname, const char * mode) {
     // convert fname (UTF-8)
     wchar_t * wfname = ggml_mbstowcs(fname);
     if (wfname) {
-        // convert mode (ANSI)
-        wchar_t * wmode = GGML_MALLOC((strlen(mode) + 1) * sizeof(wchar_t));
-        wchar_t * wmode_p = wmode;
-        do {
-            *wmode_p++ = (wchar_t)*mode;
-        } while (*mode++);
-
-        // open file
-        file = _wfopen(wfname, wmode);
+        // convert mode (UTF-8)
+        wchar_t * wmode = ggml_mbstowcs(mode);
+        if (wmode) {
+            // open file
+            file = _wfopen(wfname, wmode);
+            GGML_FREE(wmode);
+        }
 
         GGML_FREE(wfname);
-        GGML_FREE(wmode);
     }
 
     return file;
@@ -1071,6 +1068,7 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "IM2COL",
     "IM2COL_BACK",
     "IM2COL_3D",
+    "COL2IM_1D",
     "CONV_2D",
     "CONV_3D",
     "CONV_2D_DW",
@@ -1121,7 +1119,7 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "GLU",
 };
 
-static_assert(GGML_OP_COUNT == 97, "GGML_OP_COUNT != 97");
+static_assert(GGML_OP_COUNT == 98, "GGML_OP_COUNT != 98");
 
 static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "none",
@@ -1182,6 +1180,7 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "im2col(x)",
     "im2col_back(x)",
     "im2col_3d(x)",
+    "col2im_1d(x)",
     "conv_2d(x)",
     "conv_3d(x)",
     "conv_2d_dw(x)",
@@ -1232,7 +1231,7 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "glu(x)",
 };
 
-static_assert(GGML_OP_COUNT == 97, "GGML_OP_COUNT != 97");
+static_assert(GGML_OP_COUNT == 98, "GGML_OP_COUNT != 98");
 
 static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
 
@@ -4583,6 +4582,41 @@ struct ggml_tensor * ggml_conv_1d_dw_ph(
     return ggml_conv_1d_dw(ctx, a, b, s0, a->ne[0] / 2, d0);
 }
 
+// ggml_col2im_1d
+
+struct ggml_tensor * ggml_col2im_1d(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        int                   s0,
+        int                   oc,
+        int                   p0) {
+    GGML_ASSERT(ggml_is_matrix(a));
+    GGML_ASSERT(ggml_is_contiguous(a));
+    GGML_ASSERT(a->type == GGML_TYPE_F32 || a->type == GGML_TYPE_F16 || a->type == GGML_TYPE_BF16);
+    GGML_ASSERT(s0 > 0);
+    GGML_ASSERT(oc > 0);
+    GGML_ASSERT(p0 >= 0);
+
+    const int64_t K_OC = a->ne[0];
+    const int64_t T_in = a->ne[1];
+    const int64_t K = K_OC / oc;
+    const int64_t T_out = (T_in - 1) * s0 + K - 2 * p0;
+
+    GGML_ASSERT(K_OC == K * oc);  // a->ne[0] must be a whole number of oc blocks
+    GGML_ASSERT(K > 0 && T_out > 0);
+
+    const int64_t ne[4] = { T_out, oc, 1, 1 };
+    struct ggml_tensor * result = ggml_new_tensor(ctx, a->type, 2, ne);
+
+    int32_t params[] = { s0, (int32_t)oc, (int32_t)p0 };
+    ggml_set_op_params(result, params, sizeof(params));
+
+    result->op     = GGML_OP_COL2IM_1D;
+    result->src[0] = a;
+
+    return result;
+}
+
 // ggml_conv_transpose_1d
 
 static int64_t ggml_calc_conv_transpose_1d_output_size(int64_t ins, int64_t ks, int s, int p, int d) {
@@ -5265,7 +5299,7 @@ static struct ggml_tensor * ggml_fill_impl(
     struct ggml_tensor  * a,
     float                 c,
     bool                  inplace) {
-    GGML_ASSERT(a->type == GGML_TYPE_F32);
+    GGML_ASSERT(a->type == GGML_TYPE_F32 || a->type == GGML_TYPE_F16);
     GGML_ASSERT(ggml_is_contiguous(a));
 
     struct ggml_tensor * result = inplace ? ggml_view_tensor(ctx, a) : ggml_dup_tensor(ctx, a);

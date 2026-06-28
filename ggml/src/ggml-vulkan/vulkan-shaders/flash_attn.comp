@@ -21,6 +21,7 @@
 #extension GL_KHR_shader_subgroup_vote : enable
 
 #include "types.glsl"
+#include "dot_product_funcs.glsl"
 #include "flash_attn_base.glsl"
 
 const uint32_t HSK_per_thread = HSK / D_split;
@@ -323,7 +324,7 @@ void main() {
 #endif
                     }
                     [[unroll]] for (uint32_t r = 0; r < rows_per_thread; ++r) {
-                        Sf[r][c] += dot(ACC_TYPEV4(Q_cache[r]), ACC_TYPEV4(K_Tf));
+                        Sf[r][c] = dot_product(Q_cache[r], K_Tf, Sf[r][c]);
                     }
                 }
             }
@@ -348,7 +349,7 @@ void main() {
 #endif
                     }
                     [[unroll]] for (uint32_t r = 0; r < rows_per_thread; ++r) {
-                        Sf[r][c] += dot(ACC_TYPEV4(Qf[tile_row(r) * qf_stride + d * D_split + d_tid]), ACC_TYPEV4(K_Tf));
+                        Sf[r][c] = dot_product(Qf[tile_row(r) * qf_stride + d * D_split + d_tid], K_Tf, Sf[r][c]);
                     }
                 }
             }
@@ -494,6 +495,7 @@ void main() {
                 }
                 rowmaxf = max(rowmaxf, float(Sf[r][c]));
             }
+            rowmaxf += FATTN_KQ_MAX_OFFSET;
             float Moldf = Mf[r];
 
             // M = max(rowmax, Mold)

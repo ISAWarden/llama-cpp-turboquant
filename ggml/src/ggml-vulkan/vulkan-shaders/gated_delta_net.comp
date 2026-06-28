@@ -107,8 +107,11 @@ void main() {
 
     FLOAT_TYPE s_shard[ROWS_PER_LANE];
     [[unroll]] for (uint r = 0; r < ROWS_PER_LANE; r++) {
-        s_shard[r] = FLOAT_TYPE(data_state[state_base + col * S_V + r * LANES_PER_COLUMN + lane]);
+        s_shard[r] = FLOAT_TYPE(data_state[state_in_base + col * S_V + r * LANES_PER_COLUMN + lane]);
     }
+
+    // snapshot slot mapping: slot 0 = most recent state, slot s = s tokens back.
+    // When n_tokens < K, only slots 0..n_tokens-1 are written; older slots are caller-owned.
 
     uint attn_off = (seq_id * n_tokens * H + head_id) * S_V;
 

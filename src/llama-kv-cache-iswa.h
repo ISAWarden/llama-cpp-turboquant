@@ -25,8 +25,10 @@ public:
                      uint32_t   n_seq_max,
                      uint32_t   n_ubatch,
                      uint32_t   n_pad,
+               llama_memory_t   mem_other,
         const layer_filter_cb & filter,
-        const  layer_reuse_cb & reuse);
+        const  layer_reuse_cb & reuse,
+        const  layer_share_cb & share);
 
     ~llama_kv_cache_iswa() = default;
 
@@ -69,6 +71,9 @@ public:
 
     llama_kv_cache * get_base() const;
     llama_kv_cache * get_swa () const;
+
+    // Read-only MTP cross-attention: pair base+swa slot infos with a one-token ubatch.
+    llama_memory_context_ptr init_mtp(llama_seq_id seq_id, llama_ubatch ubatch);
 
 private:
     const llama_hparams & hparams;

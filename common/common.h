@@ -96,6 +96,7 @@ enum llama_example {
     LLAMA_EXAMPLE_FIT_PARAMS,
     LLAMA_EXAMPLE_RESULTS,
     LLAMA_EXAMPLE_EXPORT_GRAPH_OPS,
+    LLAMA_EXAMPLE_DOWNLOAD,
 
     LLAMA_EXAMPLE_COUNT,
 };
@@ -158,9 +159,9 @@ enum common_params_sampling_config : uint64_t {
 
 enum common_speculative_type {
     COMMON_SPECULATIVE_TYPE_NONE,          // no speculative decoding
-    COMMON_SPECULATIVE_TYPE_DRAFT,         // draft model
-    COMMON_SPECULATIVE_TYPE_EAGLE3,        // eagle draft model
-    COMMON_SPECULATIVE_TYPE_MTP,           // multi-token prediction
+    COMMON_SPECULATIVE_TYPE_DRAFT_SIMPLE,  // standalone draft model speculative decoding
+    COMMON_SPECULATIVE_TYPE_DRAFT_EAGLE3,  // Eagle3 speculative decoding
+    COMMON_SPECULATIVE_TYPE_DRAFT_MTP,     // Multi-token prediction
     COMMON_SPECULATIVE_TYPE_NGRAM_SIMPLE,  // simple self-speculative decoding
     COMMON_SPECULATIVE_TYPE_NGRAM_MAP_K,   // self-speculative decoding with n-gram keys only
     COMMON_SPECULATIVE_TYPE_NGRAM_MAP_K4V, // self-speculative decoding with n-gram keys and 4 m-gram values
@@ -277,6 +278,7 @@ struct common_params_sampling {
     std::vector<llama_token> reasoning_budget_end;             // end tag token sequence
     std::vector<llama_token> reasoning_budget_forced;          // forced sequence (message + end tag)
     std::string              reasoning_budget_message;         // message injected before end tag when budget exhausted
+    bool                     reasoning_control = false;        // create the budget sampler on demand so reasoning can be ended at runtime
 
     bool backend_sampling = false;
 
@@ -289,21 +291,36 @@ struct common_params_sampling {
 };
 
 struct common_params_model {
-    std::string path        = ""; // model local path                                       // NOLINT
-    std::string url         = ""; // model url to download                                  // NOLINT
-    std::string hf_repo     = ""; // HF repo                                                // NOLINT
-    std::string hf_file     = ""; // HF file                                                // NOLINT
-    std::string docker_repo = ""; // Docker repo                                            // NOLINT
-    std::string name        = ""; // in format <user>/<model>[:<tag>] (tag is optional)     // NOLINT
+    std::string path        = ""; // model local path
+    std::string url         = ""; // model url to download
+    std::string hf_repo     = ""; // HF repo
+    std::string hf_file     = ""; // HF file
+    std::string docker_repo = ""; // Docker repo
+
+    std::string get_name() const {
+        if (!hf_repo.empty()) {
+            return hf_repo;
+        }
+        if (!docker_repo.empty()) {
+            return docker_repo;
+        }
+        return path;
+    }
+
+    bool empty() const {
+        return get_name().empty();
+    }
 };
 
 // draft-model-based speculative decoding parameters
 struct common_params_speculative_draft {
-    int32_t n_max = 16; // maximum number of tokens to draft during speculative decoding
-    int32_t n_min = 0;  // minimum number of draft tokens to use for speculative decoding
+    int32_t n_max = 3; // maximum number of tokens to draft during speculative decoding
+    int32_t n_min = 0; // minimum number of draft tokens to use for speculative decoding
 
-    float p_split = 0.1f;  // speculative decoding split probability
-    float p_min   = 0.75f; // minimum speculative decoding probability (greedy)
+    float p_split = 0.1f; // speculative decoding split probability
+    float p_min   = 0.0f; // minimum speculative decoding probability (greedy)
+
+    bool backend_sampling = true; // offload draft sampling to the backend (default: on)
 
     common_params_model mparams;
 
@@ -349,6 +366,7 @@ struct common_params_speculative_mtp {
 struct common_params_speculative {
     std::vector<enum common_speculative_type> types = { COMMON_SPECULATIVE_TYPE_NONE };
 
+    // used by Simple, MTP, Eagle3, etc. - all methods that require some kind of draft model
     common_params_speculative_draft draft;
     common_params_speculative_mtp   mtp;
 
@@ -360,11 +378,19 @@ struct common_params_speculative {
     common_params_speculative_ngram_cache ngram_cache;
 
     bool has_dft() const {
-        return !draft.mparams.path.empty() || !draft.mparams.hf_repo.empty();
+        return !draft.mparams.empty();
+    }
+
+    uint32_t need_n_rs_seq() const {
+        bool needs_rs_seq = std::any_of(types.begin(), types.end(), [&](auto t) {
+            return t == COMMON_SPECULATIVE_TYPE_DRAFT_MTP || t == COMMON_SPECULATIVE_TYPE_DRAFT_EAGLE3;
+        });
+
+        return needs_rs_seq ? draft.n_max : 0u;
     }
 
     bool has_mtp() const {
-        return std::find(types.begin(), types.end(), COMMON_SPECULATIVE_TYPE_MTP) != types.end() && mtp.model != nullptr;
+        return std::find(types.begin(), types.end(), COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != types.end() && mtp.model != nullptr;
     }
 };
 
@@ -431,6 +457,7 @@ struct common_params {
     int32_t moe_expert_boost      =     0; // MoE expert residency cache budget in MiB (0 = disabled)
     int32_t n_parallel            =     1; // number of parallel sequences to decode
     int32_t n_sequences           =     1; // number of sequences to decode
+    int32_t n_outputs_max         =     0; // max outputs in a batch (0 = n_batch)
     int32_t grp_attn_n            =     1; // group-attention factor
     int32_t grp_attn_w            =   512; // group-attention width
     int32_t n_print               =    -1; // print token count every n tokens (-1 = disabled)
@@ -479,7 +506,7 @@ struct common_params {
 
     std::set<std::string> model_alias;     // model aliases                                                 // NOLINT
     std::set<std::string> model_tags;      // model tags (informational, not used for routing)              // NOLINT
-    std::string hf_token             = ""; // HF token                                                      // NOLINT
+    std::string hf_token             = ""; // HF token (aka bearer token)                                   // NOLINT
     std::string prompt               = "";                                                                  // NOLINT
     std::string system_prompt        = "";                                                                  // NOLINT
     std::string prompt_file          = ""; // store the external prompt file name                           // NOLINT
@@ -487,6 +514,7 @@ struct common_params {
     std::string input_prefix         = ""; // string to prefix user inputs with                             // NOLINT
     std::string input_suffix         = ""; // string to suffix user inputs with                             // NOLINT
     std::string logits_file          = ""; // file for saving *all* logits                                  // NOLINT
+    std::string path_prompts_log_dir = ""; // directory with logged prompts                                 // NOLINT
 
     // llama-debug specific options
     std::string logits_output_dir = "data"; // directory for saving logits output files                     // NOLINT
@@ -568,9 +596,10 @@ struct common_params {
     struct common_params_model mmproj;
     bool mmproj_use_gpu = true;     // use GPU for multimodal model
     bool no_mmproj = false;         // explicitly disable multimodal model
-    std::vector<std::string> image; // path to image file(s)
+    std::vector<std::string> image; // path to image file(s) ; TODO: change the name to "media"
     int image_min_tokens = -1;
     int image_max_tokens = -1;
+    int mtmd_batch_max_tokens = 1024;
 
     // finetune
     struct lr_opt lr;
@@ -587,14 +616,15 @@ struct common_params {
     // server params
     int32_t port                = 8080;          // server listens on this network port
     bool    reuse_port          = false;         // allow multiple sockets to bind to the same port
-    int32_t timeout_read        = 600;           // http read timeout in seconds
+    int32_t timeout_read        = 3600;          // http read timeout in seconds
     int32_t timeout_write       = timeout_read;  // http write timeout in seconds
+    int32_t sse_ping_interval   = 30;            // SSE ping interval in seconds
     int32_t n_threads_http      = -1;    // number of threads to process HTTP requests (TODO: support threadpool)
     int32_t n_cache_reuse       = 0;     // min chunk size to reuse from the cache via KV shifting
     bool    cache_prompt        = true;  // whether to enable prompt caching
     bool    cache_idle_slots    = true;  // save and clear idle slots upon starting a new task
     int32_t n_ctx_checkpoints   = 32;    // max number of context checkpoints per slot
-    int32_t checkpoint_every_nt = 8192;  // make a checkpoint every n tokens during prefill
+    int32_t checkpoint_min_step = 8192;  // minimum spacing between context checkpoints
     int32_t cache_ram_mib       = 8192;  // -1 = no limit, 0 - disable, 1 = 1 MiB, etc.
 
     std::string hostname      = "127.0.0.1";
@@ -616,10 +646,10 @@ struct common_params {
 
     std::map<std::string, std::string> default_template_kwargs;
 
-    // webui configs
-    bool webui = true;
-    bool webui_mcp_proxy = false;
-    std::string webui_config_json;
+    // UI configs
+    bool ui = true;
+    bool ui_mcp_proxy = false;
+    std::string ui_config_json;
 
     // "advanced" endpoints are disabled by default for better security
     bool endpoint_slots   = true;
@@ -630,10 +660,11 @@ struct common_params {
     std::vector<std::string> server_tools;
 
     // router server configs
-    std::string models_dir    = ""; // directory containing models for the router server
-    std::string models_preset = ""; // directory containing model presets for the router server
-    int models_max = 4;             // maximum number of models to load simultaneously
-    bool models_autoload = true;    // automatically load models when requested via the router server
+    std::string models_dir    = "";     // directory containing models for the router server
+    std::string models_preset = "";     // directory containing model presets for the router server
+    int models_max = 4;                 // maximum number of models to load simultaneously
+    bool models_autoload = true;        // automatically load models when requested via the router server
+    std::string models_preset_hf = "";  // show a warning about remote presets on router loaded (if not empty)
 
     bool log_json = false;
 
@@ -698,6 +729,7 @@ struct common_params {
 // initializes the logging system and prints info about the build
 void common_init();
 
+void common_params_print_info(const common_params & params, bool print_devices = true);
 std::string common_params_get_system_info(const common_params & params);
 
 bool parse_cpu_range(const std::string & range, bool(&boolmask)[GGML_MAX_N_THREADS]);
@@ -724,6 +756,7 @@ std::string string_format(const char * fmt, ...);
 
 std::string string_strip(const std::string & str);
 std::string string_get_sortable_timestamp();
+std::string string_lcs(std::string_view a, std::string_view b);
 
 std::string string_join(const std::vector<std::string> & values, const std::string & separator);
 std::vector<std::string> string_split(const std::string & str, const std::string & delimiter);
@@ -833,6 +866,9 @@ struct common_file_info {
 };
 std::vector<common_file_info> fs_list(const std::string & path, bool include_directories);
 
+// fs open, also handle UTF8 on Windows
+std::ifstream fs_open_ifstream(const std::string & fname, std::ios_base::openmode mode);
+
 //
 // TTY utils
 //
@@ -848,7 +884,7 @@ struct common_sampler;
 
 // note: defines the model, context, samplers, ets. lifetimes
 struct common_init_result {
-    common_init_result(common_params & params);
+    common_init_result(common_params & params, bool model_only = false);
     ~common_init_result();
 
     llama_model * model();
@@ -866,7 +902,7 @@ private:
 
 using common_init_result_ptr = std::unique_ptr<common_init_result>;
 
-common_init_result_ptr common_init_from_params(common_params & params);
+common_init_result_ptr common_init_from_params(common_params & params, bool model_only = false);
 
 struct llama_model_params     common_model_params_to_llama  (      common_params & params);
 struct llama_context_params   common_context_params_to_llama(const common_params & params);
@@ -893,6 +929,10 @@ enum common_context_seq_rm_type {
 // note: clears the memory of the context
 common_context_seq_rm_type common_context_can_seq_rm(llama_context * ctx);
 
+// aborts execution on failure
+void common_context_seq_rm (llama_context * ctx, llama_seq_id seq_id, llama_pos p0, llama_pos p1);
+void common_context_seq_add(llama_context * ctx, llama_seq_id seq_id, llama_pos p0, llama_pos p1, llama_pos delta);
+void common_context_seq_cp (llama_context * ctx, llama_seq_id seq_id_src, llama_seq_id seq_id_dst, llama_pos p0, llama_pos p1);
 
 //
 // Batch utils
@@ -914,7 +954,8 @@ void common_batch_add(
 // tokens from memory, so this approach works across all model architectures.
 bool common_prompt_batch_decode(
               struct llama_context * ctx,
-    const std::vector<llama_token> & embd,
+    const std::vector<llama_token> & all_tokens,
+                               int   n_new,
                                int & n_past,
                                int   n_batch,
                   std::string_view   state_path,
@@ -1045,6 +1086,10 @@ struct common_prompt_checkpoint {
     std::vector<uint8_t> data_tgt;
     std::vector<uint8_t> data_dft;
 
+    // (optional) speculative-decoding implementation state stashed with the checkpoint
+    // (e.g. eagle3's deferred-boundary g_embd row)
+    std::vector<uint8_t> data_spec;
+
     size_t size() const;
 
     bool empty() const;
@@ -1074,4 +1119,7 @@ struct common_prompt_checkpoint {
             llama_context * ctx,
             llama_seq_id seq_id,
             llama_state_seq_flags flags) const;
+
+    void clear_tgt();
+    void clear_dft();
 };

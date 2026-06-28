@@ -307,7 +307,7 @@ void ggml_backend_tensor_get_2d_async(ggml_backend_t backend, const struct ggml_
     GGML_ASSERT(tensor);
     GGML_ASSERT(tensor->data != NULL && "tensor not allocated");
 
-    if (n_copies <= 1 || backend->iface.set_tensor_2d_async == NULL) {
+    if (n_copies <= 1 || backend->iface.get_tensor_2d_async == NULL) {
         for (size_t i = 0; i < n_copies; i++) {
             ggml_backend_tensor_get_async(backend, tensor, (char *) data + i*stride_data, offset + i*stride_tensor, size);
         }
@@ -318,7 +318,7 @@ void ggml_backend_tensor_get_2d_async(ggml_backend_t backend, const struct ggml_
     }
 
     GGML_ASSERT(tensor->data != NULL && "tensor not allocated");
-    GGML_ASSERT(offset + (n_copies-1)*stride_tensor + size <= ggml_nbytes(tensor) && "tensor write out of bounds");
+    GGML_ASSERT(offset + (n_copies-1)*stride_tensor + size <= ggml_nbytes(tensor) && "tensor read out of bounds");
     backend->iface.get_tensor_2d_async(backend, tensor, data, offset, size, n_copies, stride_tensor, stride_data);
 }
 
@@ -380,7 +380,7 @@ void ggml_backend_tensor_get_2d(const struct ggml_tensor * tensor, void * data, 
     ggml_backend_buffer_t buf = tensor->view_src ? tensor->view_src->buffer : tensor->buffer;
     GGML_ASSERT(buf != NULL && "tensor buffer not set");
 
-    if (n_copies <= 1 || buf->iface.set_tensor_2d == NULL) {
+    if (n_copies <= 1 || buf->iface.get_tensor_2d == NULL) {
         for (size_t i = 0; i < n_copies; i++) {
             ggml_backend_tensor_get(tensor, (char *) data + i*stride_data, offset + i*stride_tensor, size);
         }
@@ -1762,6 +1762,8 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
         int split_backend_id = split->backend_id;
         ggml_backend_t split_backend = sched->backends[split_backend_id];
 
+        ggml_backend_synchronize(split_backend);
+
         // copy the input tensors to the split backend
         for (int input_id = 0; input_id < split->n_inputs; input_id++) {
             ggml_backend_t input_backend = ggml_backend_sched_get_tensor_backend(sched, split->inputs[input_id]);
@@ -1772,15 +1774,15 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                 // inputs from the user must be copied immediately to prevent the user overwriting the data before the copy is done
                 if (sched->events[split_backend_id][sched->cur_copy] != NULL) {
                     ggml_backend_event_synchronize(sched->events[split_backend_id][sched->cur_copy]);
-                } else {
+                } else if (!split_backend->iface.cpy_tensor_async) {
                     ggml_backend_synchronize(split_backend);
                 }
-                ggml_backend_tensor_copy(input, input_cpy);
+                ggml_backend_tensor_copy_async(input_backend, split_backend, input, input_cpy);
             } else {
                 // wait for the split backend to finish using the input before overwriting it
                 if (sched->events[split_backend_id][sched->cur_copy] != NULL) {
                     ggml_backend_event_wait(split_backend, sched->events[split_backend_id][sched->cur_copy]);
-                } else {
+                } else if (!split_backend->iface.cpy_tensor_async) {
                     ggml_backend_synchronize(split_backend);
                 }
 
@@ -2008,6 +2010,8 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                 }
             }
         }
+
+        ggml_backend_synchronize(split_backend);
 
         if (!sched->callback_eval) {
             enum ggml_status ec = ggml_backend_graph_compute_async(split_backend, &split->graph);
