@@ -938,6 +938,9 @@ jobs:
 
     runs-on: windows-2022
 
+    permissions:
+      actions: write
+
     defaults:
       run:
         shell: bash
@@ -1056,6 +1059,9 @@ jobs:
             fp16: ON
 
     runs-on: ubuntu-24.04
+
+    permissions:
+      actions: write
 
     env:
       ONEAPI_ROOT: /opt/intel/oneapi/

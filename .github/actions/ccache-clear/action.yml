@@ -18,5 +18,7 @@ runs:
         fi
         while read -r id key; do
           echo "Deleting cache: $id ($key)"
-          gh cache delete "$id"
+          if ! gh cache delete "$id"; then
+            echo "::warning::Failed to delete cache $id ($key); continuing"
+          fi
         done <<< "$CACHES"
