@@ -19,6 +19,7 @@
 #include <vector>
 #include <unordered_set>
 
+#include "arg.h"
 #include "build-info.h"
 #include "common.h"
 #include "download.h"
@@ -275,9 +276,11 @@ static std::string pair_str(const std::pair<int, int> & p) {
     return buf;
 }
 
-static std::vector<int> parse_int_range(const std::string & s) {
+static std::vector<int> parse_int_range(const std::string & s, bool allow_negative = false) {
     // first[-last[(+|*)step]]
-    std::regex range_regex(R"(^(\d+)(?:-(\d+)(?:([\+|\*])(\d+))?)?(?:,|$))");
+    std::regex range_regex(allow_negative
+        ? R"(^(-?\d+)(?:-(\d+)(?:([\+|\*])(\d+))?)?(?:,|$))"
+        : R"(^(\d+)(?:-(\d+)(?:([\+|\*])(\d+))?)?(?:,|$))");
 
     std::smatch match;
     std::string::const_iterator search_start(s.cbegin());
@@ -320,6 +323,7 @@ struct cmd_params {
     std::vector<std::string>         hf_repo;
     std::vector<std::string>         hf_file;
     std::string                      hf_token;
+    bool                             offline;
     std::vector<int>                 n_prompt;
     std::vector<int>                 n_gen;
     std::vector<std::pair<int, int>> n_pg;
@@ -334,11 +338,10 @@ struct cmd_params {
     std::vector<int>                 poll;
     std::vector<int>                 n_gpu_layers;
     std::vector<int>                 n_cpu_moe;
-    std::vector<int>                 moe_expert_boost;
     std::vector<llama_split_mode>    split_mode;
     std::vector<int>                 main_gpu;
     std::vector<bool>                no_kv_offload;
-    std::vector<bool>                flash_attn;
+    std::vector<llama_flash_attn_type> flash_attn;
     std::vector<std::vector<ggml_backend_dev_t>> devices;
     std::vector<std::vector<float>>  tensor_split;
     std::vector<std::vector<llama_model_tensor_buft_override>> tensor_buft_overrides;
@@ -365,6 +368,7 @@ static const cmd_params cmd_params_defaults = {
     /* hf_repo              */ {},
     /* hf_file              */ {},
     /* hf_token             */ "",
+    /* offline              */ false,
     /* n_prompt             */ { 512 },
     /* n_gen                */ { 128 },
     /* n_pg                 */ {},
@@ -377,13 +381,12 @@ static const cmd_params cmd_params_defaults = {
     /* cpu_mask             */ { "0x0" },
     /* cpu_strict           */ { false },
     /* poll                 */ { 50 },
-    /* n_gpu_layers         */ { 99 },
+    /* n_gpu_layers         */ { -1 },
     /* n_cpu_moe            */ { 0 },
-    /* moe_expert_boost     */ { 0 },
     /* split_mode           */ { LLAMA_SPLIT_MODE_LAYER },
     /* main_gpu             */ { 0 },
     /* no_kv_offload        */ { false },
-    /* flash_attn           */ { false },
+    /* flash_attn           */ { LLAMA_FLASH_ATTN_TYPE_AUTO },
     /* devices              */ { {} },
     /* tensor_split         */ { std::vector<float>(llama_max_devices(), 0.0f) },
     /* tensor_buft_overrides*/ { std::vector<llama_model_tensor_buft_override>{ { nullptr, nullptr } } },
@@ -436,6 +439,8 @@ static void print_usage(int /* argc */, char ** argv) {
     printf("                                              (default: unused)\n");
     printf("  -hft, --hf-token <token>                    Hugging Face access token\n");
     printf("                                              (default: value from HF_TOKEN environment variable)\n");
+    printf("  --offline                                   Offline mode: forces use of cache, prevents network access\n");
+    printf("                                              (default: disabled)\n");
     printf("  -p, --n-prompt <n>                          (default: %s)\n", join(cmd_params_defaults.n_prompt, ",").c_str());
     printf("  -n, --n-gen <n>                             (default: %s)\n", join(cmd_params_defaults.n_gen, ",").c_str());
     printf("  -pg <pp,tg>                                 (default: %s)\n", join(transform_to_str(cmd_params_defaults.n_pg, pair_str), ",").c_str());
@@ -450,11 +455,10 @@ static void print_usage(int /* argc */, char ** argv) {
     printf("  --poll <0...100>                            (default: %s)\n", join(cmd_params_defaults.poll, ",").c_str());
     printf("  -ngl, --n-gpu-layers <n>                    (default: %s)\n", join(cmd_params_defaults.n_gpu_layers, ",").c_str());
     printf("  -ncmoe, --n-cpu-moe <n>                     (default: %s)\n", join(cmd_params_defaults.n_cpu_moe, ",").c_str());
-    printf("  --moe-expert-boost <n>                      MoE expert cache budget in MiB (default: %s)\n", join(cmd_params_defaults.moe_expert_boost, ",").c_str());
     printf("  -sm, --split-mode <none|layer|row|tensor>   (default: %s)\n", join(transform_to_str(cmd_params_defaults.split_mode, split_mode_str), ",").c_str());
     printf("  -mg, --main-gpu <i>                         (default: %s)\n", join(cmd_params_defaults.main_gpu, ",").c_str());
     printf("  -nkvo, --no-kv-offload <0|1>                (default: %s)\n", join(cmd_params_defaults.no_kv_offload, ",").c_str());
-    printf("  -fa, --flash-attn <0|1>                     (default: %s)\n", join(cmd_params_defaults.flash_attn, ",").c_str());
+    printf("  -fa, --flash-attn <on|off|auto>             (default: %s)\n", join(transform_to_str(cmd_params_defaults.flash_attn, llama_flash_attn_type_name), ",").c_str());
     printf("  -dev, --device <dev0/dev1/...>              (default: auto)\n");
     printf("  -mmp, --mmap <0|1>                          (default: %s)\n", join(cmd_params_defaults.use_mmap, ",").c_str());
     printf("  -dio, --direct-io <0|1>                     (default: %s)\n", join(cmd_params_defaults.use_direct_io, ",").c_str());
@@ -495,15 +499,6 @@ static ggml_type ggml_type_from_name(const std::string & s) {
     }
     if (s == "iq4_nl") {
         return GGML_TYPE_IQ4_NL;
-    }
-    if (s == "turbo2") {
-        return GGML_TYPE_TURBO2_0;
-    }
-    if (s == "turbo3") {
-        return GGML_TYPE_TURBO3_0;
-    }
-    if (s == "turbo4") {
-        return GGML_TYPE_TURBO4_0;
     }
 
     return GGML_TYPE_COUNT;
@@ -567,6 +562,8 @@ static cmd_params parse_cmd_params(int argc, char ** argv) {
                     break;
                 }
                 params.hf_token = argv[i];
+            } else if (arg == "--offline") {
+                params.offline = true;
             } else if (arg == "-p" || arg == "--n-prompt") {
                 if (++i >= argc) {
                     invalid_param = true;
@@ -722,7 +719,7 @@ static cmd_params parse_cmd_params(int argc, char ** argv) {
                     invalid_param = true;
                     break;
                 }
-                auto p = parse_int_range(argv[i]);
+                auto p = parse_int_range(argv[i], /*allow_negative=*/true);
                 params.n_gpu_layers.insert(params.n_gpu_layers.end(), p.begin(), p.end());
             } else if (arg == "-ncmoe" || arg == "--n-cpu-moe") {
                 if (++i >= argc) {
@@ -731,22 +728,6 @@ static cmd_params parse_cmd_params(int argc, char ** argv) {
                 }
                 auto p = parse_int_range(argv[i]);
                 params.n_cpu_moe.insert(params.n_cpu_moe.end(), p.begin(), p.end());
-            } else if (arg == "--moe-expert-boost" || arg == "--moe-expert-cache") {
-                if (++i >= argc) {
-                    invalid_param = true;
-                    break;
-                }
-                auto p = parse_int_range(argv[i]);
-                for (const auto value : p) {
-                    if (value < 0) {
-                        invalid_param = true;
-                        break;
-                    }
-                }
-                if (invalid_param) {
-                    break;
-                }
-                params.moe_expert_boost.insert(params.moe_expert_boost.end(), p.begin(), p.end());
             } else if (llama_supports_rpc() && (arg == "-rpc" || arg == "--rpc")) {
                 if (++i >= argc) {
                     invalid_param = true;
@@ -821,8 +802,27 @@ static cmd_params parse_cmd_params(int argc, char ** argv) {
                     invalid_param = true;
                     break;
                 }
-                auto p = string_split<bool>(argv[i], split_delim);
-                params.flash_attn.insert(params.flash_attn.end(), p.begin(), p.end());
+                auto p = string_split<std::string>(argv[i], split_delim);
+
+                std::vector<llama_flash_attn_type> types;
+                for (const auto & v : p) {
+                    llama_flash_attn_type type;
+                    if (common_arg_utils::is_truthy(v)) {
+                        type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
+                    } else if (common_arg_utils::is_falsey(v)) {
+                        type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
+                    } else if (common_arg_utils::is_autoy(v)) {
+                        type = LLAMA_FLASH_ATTN_TYPE_AUTO;
+                    } else {
+                        invalid_param = true;
+                        break;
+                    }
+                    types.push_back(type);
+                }
+                if (invalid_param) {
+                    break;
+                }
+                params.flash_attn.insert(params.flash_attn.end(), types.begin(), types.end());
             } else if (arg == "-mmp" || arg == "--mmap") {
                 if (++i >= argc) {
                     invalid_param = true;
@@ -1035,24 +1035,23 @@ static cmd_params parse_cmd_params(int argc, char ** argv) {
 
     if (!params.hf_repo.empty()) {
         for (size_t i = 0; i < params.hf_repo.size(); i++) {
-            common_params_model model;
-
-            if (params.hf_file.empty() || params.hf_file[i].empty()) {
-                model.hf_repo = params.hf_repo[i];
-            } else {
-                model.hf_repo = params.hf_repo[i];
-                model.hf_file = params.hf_file[i];
+            common_params p;
+            p.hf_token      = params.hf_token;
+            p.offline       = params.offline;
+            p.model.hf_repo = params.hf_repo[i];
+            if (!params.hf_file.empty() && !params.hf_file[i].empty()) {
+                p.model.hf_file = params.hf_file[i];
             }
 
-            common_download_opts opts;
-            opts.bearer_token = params.hf_token;
-            auto download_result = common_download_model(model, opts);
-            if (download_result.model_path.empty()) {
+            // only the text model file is needed
+            common_models_handler models_handler = common_models_handler_init(p, LLAMA_EXAMPLE_BENCH);
+            common_models_handler_apply(models_handler, p);
+            if (p.model.path.empty()) {
                 fprintf(stderr, "error: failed to download model from HuggingFace\n");
                 exit(1);
             }
 
-            params.model.push_back(download_result.model_path);
+            params.model.push_back(p.model.path);
         }
     }
 
@@ -1089,9 +1088,6 @@ static cmd_params parse_cmd_params(int argc, char ** argv) {
     }
     if (params.n_cpu_moe.empty()) {
         params.n_cpu_moe = cmd_params_defaults.n_cpu_moe;
-    }
-    if (params.moe_expert_boost.empty()) {
-        params.moe_expert_boost = cmd_params_defaults.moe_expert_boost;
     }
     if (params.split_mode.empty()) {
         params.split_mode = cmd_params_defaults.split_mode;
@@ -1166,11 +1162,10 @@ struct cmd_params_instance {
     int                poll;
     int                n_gpu_layers;
     int                n_cpu_moe;
-    int                moe_expert_boost;
     llama_split_mode   split_mode;
     int                main_gpu;
     bool               no_kv_offload;
-    bool               flash_attn;
+    llama_flash_attn_type flash_attn;
     std::vector<ggml_backend_dev_t> devices;
     std::vector<float> tensor_split;
     std::vector<llama_model_tensor_buft_override> tensor_buft_overrides;
@@ -1251,11 +1246,10 @@ struct cmd_params_instance {
         cparams.n_ctx           = n_prompt + n_gen + n_depth;
         cparams.n_batch         = n_batch;
         cparams.n_ubatch        = n_ubatch;
-        cparams.moe_expert_boost = moe_expert_boost;
         cparams.type_k          = type_k;
         cparams.type_v          = type_v;
         cparams.offload_kqv     = !no_kv_offload;
-        cparams.flash_attn_type = flash_attn ? LLAMA_FLASH_ATTN_TYPE_ENABLED : LLAMA_FLASH_ATTN_TYPE_DISABLED;
+        cparams.flash_attn_type = flash_attn;
         cparams.embeddings      = embeddings;
         cparams.op_offload      = !no_op_offload;
         cparams.swa_full        = false;
@@ -1274,7 +1268,6 @@ static std::vector<cmd_params_instance> get_cmd_params_instances(const cmd_param
     for (const auto & fpc : params.fit_params_min_ctx)
     for (const auto & nl : params.n_gpu_layers)
     for (const auto & ncmoe : params.n_cpu_moe)
-    for (const auto & meb : params.moe_expert_boost)
     for (const auto & sm : params.split_mode)
     for (const auto & mg : params.main_gpu)
     for (const auto & devs : params.devices)
@@ -1315,7 +1308,6 @@ static std::vector<cmd_params_instance> get_cmd_params_instances(const cmd_param
                 /* .poll         = */ pl,
                 /* .n_gpu_layers = */ nl,
                 /* .n_cpu_moe    = */ ncmoe,
-                /* .moe_expert_boost = */ meb,
                 /* .split_mode   = */ sm,
                 /* .main_gpu     = */ mg,
                 /* .no_kv_offload= */ nkvo,
@@ -1353,7 +1345,6 @@ static std::vector<cmd_params_instance> get_cmd_params_instances(const cmd_param
                 /* .poll         = */ pl,
                 /* .n_gpu_layers = */ nl,
                 /* .n_cpu_moe    = */ ncmoe,
-                /* .moe_expert_boost = */ meb,
                 /* .split_mode   = */ sm,
                 /* .main_gpu     = */ mg,
                 /* .no_kv_offload= */ nkvo,
@@ -1391,7 +1382,6 @@ static std::vector<cmd_params_instance> get_cmd_params_instances(const cmd_param
                 /* .poll         = */ pl,
                 /* .n_gpu_layers = */ nl,
                 /* .n_cpu_moe    = */ ncmoe,
-                /* .moe_expert_boost = */ meb,
                 /* .split_mode   = */ sm,
                 /* .main_gpu     = */ mg,
                 /* .no_kv_offload= */ nkvo,
@@ -1434,11 +1424,10 @@ struct test {
     ggml_type                type_v;
     int                      n_gpu_layers;
     int                      n_cpu_moe;
-    int                      moe_expert_boost;
     llama_split_mode         split_mode;
     int                      main_gpu;
     bool                     no_kv_offload;
-    bool                     flash_attn;
+    llama_flash_attn_type    flash_attn;
     std::vector<ggml_backend_dev_t> devices;
     std::vector<float>       tensor_split;
     std::vector<llama_model_tensor_buft_override> tensor_buft_overrides;
@@ -1475,7 +1464,6 @@ struct test {
         type_v         = inst.type_v;
         n_gpu_layers   = inst.n_gpu_layers;
         n_cpu_moe      = inst.n_cpu_moe;
-        moe_expert_boost = inst.moe_expert_boost;
         split_mode     = inst.split_mode;
         main_gpu       = inst.main_gpu;
         no_kv_offload  = inst.no_kv_offload;
@@ -1544,7 +1532,7 @@ struct test {
             "build_commit",   "build_number",   "cpu_info",      "gpu_info",       "backends",
             "model_filename", "model_type",     "model_size",    "model_n_params", "n_batch",
             "n_ubatch",       "n_threads",      "cpu_mask",      "cpu_strict",     "poll",
-            "type_k",         "type_v",         "n_gpu_layers",  "n_cpu_moe",      "moe_expert_boost", "split_mode",
+            "type_k",         "type_v",         "n_gpu_layers",  "n_cpu_moe",      "split_mode",
             "main_gpu",       "no_kv_offload",  "flash_attn",    "devices",        "tensor_split",
             "tensor_buft_overrides",            "use_mmap",      "use_direct_io",  "embeddings",
             "no_op_offload",  "no_host",        "fit_target",     "fit_min_ctx",
@@ -1560,11 +1548,11 @@ struct test {
         if (field == "build_number" || field == "n_batch" || field == "n_ubatch" || field == "n_threads" ||
             field == "poll" || field == "model_size" || field == "model_n_params" || field == "n_gpu_layers" ||
             field == "main_gpu" || field == "n_prompt" || field == "n_gen" || field == "n_depth" || field == "avg_ns" ||
-            field == "stddev_ns" || field == "no_op_offload" || field == "n_cpu_moe" || field == "moe_expert_boost" ||
-            field == "fit_target" || field == "fit_min_ctx") {
+            field == "stddev_ns" || field == "no_op_offload" || field == "n_cpu_moe" ||
+            field == "fit_target" || field == "fit_min_ctx" || field == "flash_attn") {
             return INT;
         }
-        if (field == "f16_kv" || field == "no_kv_offload" || field == "cpu_strict" || field == "flash_attn" ||
+        if (field == "f16_kv" || field == "no_kv_offload" || field == "cpu_strict" ||
             field == "use_mmap" || field == "use_direct_io" || field == "embeddings" || field == "no_host") {
             return BOOL;
         }
@@ -1630,11 +1618,10 @@ struct test {
                                             ggml_type_name(type_v),
                                             std::to_string(n_gpu_layers),
                                             std::to_string(n_cpu_moe),
-                                            std::to_string(moe_expert_boost),
                                             split_mode_str(split_mode),
                                             std::to_string(main_gpu),
                                             std::to_string(no_kv_offload),
-                                            std::to_string(flash_attn),
+                                            std::to_string((int) flash_attn),
                                             devices_to_string(devices),
                                             tensor_split_str,
                                             tensor_buft_overrides_str,
@@ -1819,7 +1806,7 @@ struct markdown_printer : public printer {
             return 6;
         }
         if (field == "flash_attn") {
-            return 2;
+            return 3;
         }
         if (field == "devices") {
             return -12;
@@ -1911,9 +1898,6 @@ struct markdown_printer : public printer {
         }
         if (params.n_cpu_moe.size() > 1 || params.n_cpu_moe != cmd_params_defaults.n_cpu_moe) {
             fields.emplace_back("n_cpu_moe");
-        }
-        if (params.moe_expert_boost.size() > 1 || params.moe_expert_boost != cmd_params_defaults.moe_expert_boost) {
-            fields.emplace_back("moe_expert_boost");
         }
         if (params.n_threads.size() > 1 || params.n_threads != cmd_params_defaults.n_threads || is_cpu_backend) {
             fields.emplace_back("n_threads");
@@ -2179,7 +2163,10 @@ static std::unique_ptr<printer> create_printer(output_formats format) {
     GGML_ABORT("fatal error");
 }
 
-int main(int argc, char ** argv) {
+// satisfies -Wmissing-declarations
+int llama_bench(int argc, char ** argv);
+
+int llama_bench(int argc, char ** argv) {
     std::setlocale(LC_NUMERIC, "C");
     // try to set locale for unicode characters in markdown
     std::setlocale(LC_CTYPE, ".UTF-8");
