@@ -18,5 +18,5 @@ runs:
         fi
         while read -r id key; do
           echo "Deleting cache: $id ($key)"
-          gh cache delete "$id"
+          gh cache delete "$id" || echo "Could not delete cache: $id ($key)"
         done <<< "$CACHES"

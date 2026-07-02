@@ -1,5 +1,6 @@
 #include "common.cuh"
 #include "fattn-common.cuh"
+#include "turbo-quant.cuh"
 
 static int ggml_cuda_fattn_vec_get_nthreads_host(const int cc) {
     return 128;
