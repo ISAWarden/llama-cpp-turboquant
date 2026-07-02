@@ -114,6 +114,7 @@ if (CUDAToolkit_FOUND)
 
     if (GGML_CUDA_FA_ALL_QUANTS)
         file(GLOB   SRCS "template-instances/fattn-vec*.cu")
+        list(FILTER SRCS EXCLUDE REGEX "turbo[234]_0")
         list(APPEND GGML_SOURCES_CUDA ${SRCS})
         add_compile_definitions(GGML_CUDA_FA_ALL_QUANTS)
     else()
@@ -121,28 +122,7 @@ if (CUDAToolkit_FOUND)
             template-instances/fattn-vec-instance-f16-f16.cu
             template-instances/fattn-vec-instance-q4_0-q4_0.cu
             template-instances/fattn-vec-instance-q8_0-q8_0.cu
-            template-instances/fattn-vec-instance-bf16-bf16.cu
-            template-instances/fattn-vec-instance-turbo3_0-turbo3_0.cu
-            template-instances/fattn-vec-instance-turbo3_0-q8_0.cu
-            template-instances/fattn-vec-instance-q8_0-turbo3_0.cu
-            template-instances/fattn-vec-instance-f16-turbo3_0.cu
-            template-instances/fattn-vec-instance-turbo3_0-f16.cu
-            template-instances/fattn-vec-instance-turbo2_0-turbo2_0.cu
-            template-instances/fattn-vec-instance-turbo2_0-q8_0.cu
-            template-instances/fattn-vec-instance-q8_0-turbo2_0.cu
-            template-instances/fattn-vec-instance-f16-turbo2_0.cu
-            template-instances/fattn-vec-instance-turbo2_0-f16.cu
-            template-instances/fattn-vec-instance-turbo3_0-turbo2_0.cu
-            template-instances/fattn-vec-instance-turbo2_0-turbo3_0.cu
-            template-instances/fattn-vec-instance-turbo4_0-turbo4_0.cu
-            template-instances/fattn-vec-instance-turbo4_0-q8_0.cu
-            template-instances/fattn-vec-instance-q8_0-turbo4_0.cu
-            template-instances/fattn-vec-instance-f16-turbo4_0.cu
-            template-instances/fattn-vec-instance-turbo4_0-f16.cu
-            template-instances/fattn-vec-instance-turbo4_0-turbo3_0.cu
-            template-instances/fattn-vec-instance-turbo3_0-turbo4_0.cu
-            template-instances/fattn-vec-instance-turbo4_0-turbo2_0.cu
-            template-instances/fattn-vec-instance-turbo2_0-turbo4_0.cu)
+            template-instances/fattn-vec-instance-bf16-bf16.cu)
     endif()
 
     ggml_add_backend_library(ggml-cuda
