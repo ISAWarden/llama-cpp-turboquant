@@ -1,8 +1,13 @@
 #version 450
 
+#extension GL_KHR_shader_subgroup_arithmetic : enable
+#extension GL_KHR_shader_subgroup_shuffle : enable
 #include "types.glsl"
 
-#if defined(SET_ROWS) && QUANT_K == 1
+#if defined(SET_ROWS) && defined(DATA_A_TURBO4_0)
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+const uint BLOCK_SIZE = 128;
+#elif defined(SET_ROWS) && QUANT_K == 1
 layout(local_size_x = 512, local_size_y = 1, local_size_z = 1) in;
 const uint BLOCK_SIZE = 512;
 #else
@@ -270,7 +275,134 @@ void quantize(uint dst_idx, uint src_idx)
 }
 #endif
 
-#if defined(SET_ROWS)
+#if defined(SET_ROWS) && defined(DATA_A_TURBO4_0)
+const float TS1_T4[128] = float[128](
+    -1,  1,  1, -1, -1,  1, -1,  1, -1, -1,  1,  1,  1,  1,  1,  1,
+     1, -1,  1, -1,  1, -1, -1,  1,  1,  1, -1,  1,  1, -1, -1, -1,
+    -1,  1,  1, -1,  1,  1, -1,  1, -1,  1,  1, -1, -1,  1, -1,  1,
+     1,  1,  1, -1, -1, -1, -1, -1,  1, -1,  1,  1,  1,  1, -1,  1,
+    -1, -1,  1, -1, -1, -1,  1, -1, -1, -1,  1, -1, -1, -1,  1,  1,
+     1, -1, -1,  1,  1,  1, -1, -1,  1,  1, -1,  1,  1, -1,  1, -1,
+    -1,  1,  1, -1,  1, -1,  1, -1,  1,  1,  1,  1, -1,  1, -1,  1,
+     1, -1,  1,  1, -1, -1, -1, -1, -1,  1,  1, -1,  1,  1, -1,  1
+);
+
+const float TS2_T4[128] = float[128](
+     1,  1,  1,  1, -1,  1,  1, -1,  1, -1, -1, -1,  1, -1, -1, -1,
+     1,  1, -1, -1,  1, -1,  1, -1,  1, -1, -1,  1, -1,  1,  1,  1,
+     1,  1, -1, -1, -1,  1, -1, -1, -1, -1, -1, -1,  1,  1,  1, -1,
+     1, -1,  1,  1,  1, -1, -1,  1, -1, -1, -1, -1, -1, -1,  1,  1,
+     1, -1,  1, -1, -1, -1, -1,  1, -1,  1, -1,  1, -1, -1,  1,  1,
+    -1,  1, -1,  1,  1, -1,  1, -1, -1, -1, -1,  1, -1, -1,  1, -1,
+     1, -1,  1,  1,  1, -1, -1,  1, -1,  1, -1,  1,  1, -1, -1,  1,
+    -1,  1, -1,  1,  1, -1,  1, -1,  1, -1, -1, -1, -1, -1,  1, -1
+);
+
+const float TINV_T4 = 0.08838834764831845;
+const float TC4[16] = float[16](
+    -0.173926, -0.117195, -0.089527, -0.068756,
+    -0.051262, -0.035597, -0.020989, -0.006938,
+     0.006938,  0.020989,  0.035597,  0.051262,
+     0.068756,  0.089527,  0.117195,  0.173926
+);
+const float TM4[15] = float[15](
+    -0.145561, -0.103361, -0.079142, -0.060009,
+    -0.043430, -0.028293, -0.013964,  0.0,
+     0.013964,  0.028293,  0.043430,  0.060009,
+     0.079142,  0.103361,  0.145561
+);
+
+shared float wht_t4[128];
+shared float sg_acc_t4[16];
+shared float gnrm_t4;
+
+void main() {
+    const uint t   = gl_LocalInvocationID.x;
+    const uint g   = gl_WorkGroupID.z * 262144 + gl_WorkGroupID.y * 512 + gl_WorkGroupID.x;
+    const uint gpr = p.ne00 / 128;
+
+    if (gpr == 0 || g >= p.ne / 128) {
+        return;
+    }
+
+    uint tmp = g;
+    const uint ig  = tmp % gpr; tmp /= gpr;
+    const uint i01 = tmp % p.ne01; tmp /= p.ne01;
+    const uint i02 = tmp % p.ne12;
+    const uint i03 = tmp / p.ne12;
+
+    const uint sb = src0_idx(ig * 128, i01, i02, i03) + get_aoffset();
+    const uint i1 = data_i[src1_idx(i01, fastmod(i02, p.ne11), fastmod(i03, p.ne12), 0) + get_boffset()] DATA_I_SWIZZLE;
+    const uint db = dst_idx(ig, i1, i02, i03) + get_doffset();
+
+    wht_t4[t] = data_s[sb + t];
+    barrier();
+
+    float v2 = subgroupAdd(wht_t4[t] * wht_t4[t]);
+    if (gl_SubgroupInvocationID == 0) {
+        sg_acc_t4[gl_SubgroupID] = v2;
+    }
+    barrier();
+    if (t == 0) {
+        float total = 0.0;
+        for (uint w = 0; w < gl_NumSubgroups; w++) {
+            total += sg_acc_t4[w];
+        }
+        gnrm_t4 = sqrt(total);
+    }
+    barrier();
+
+    wht_t4[t] *= (gnrm_t4 > 1e-10) ? (1.0 / gnrm_t4) : 0.0;
+    barrier();
+
+    wht_t4[t] *= TS1_T4[t];
+    barrier();
+
+    [[unroll]] for (uint h = 1; h < 128; h *= 2) {
+        if ((t % (2 * h)) < h) {
+            float a = wht_t4[t];
+            float b = wht_t4[t + h];
+            wht_t4[t] = a + b;
+            wht_t4[t + h] = a - b;
+        }
+        barrier();
+    }
+
+    float rv = wht_t4[t] * TINV_T4 * TS2_T4[t];
+    uint idx = 0u;
+    [[unroll]] for (uint i = 0; i < 15; i++) {
+        if (rv >= TM4[i]) {
+            idx = i + 1u;
+        }
+    }
+
+    uint sg_lane = gl_SubgroupInvocationID;
+    uint pair_low  = subgroupShuffle(idx & 0xFu, sg_lane & ~1u);
+    uint pair_high = subgroupShuffle(idx & 0xFu, (sg_lane & ~1u) + 1u);
+    if (sg_lane % 2u == 0u) {
+        data_q[db].qs[t / 2u] = uint8_t(pair_low | (pair_high << 4u));
+    }
+
+    if (t == 0u) {
+        data_q[db].rnorm = float16_t(0.0);
+    }
+
+    float rc = subgroupAdd(TC4[idx] * TC4[idx]);
+    if (sg_lane == 0u) {
+        sg_acc_t4[gl_SubgroupID] = rc;
+    }
+    barrier();
+    if (t == 0u) {
+        float total = 0.0;
+        for (uint w = 0; w < gl_NumSubgroups; w++) {
+            total += sg_acc_t4[w];
+        }
+        float rn = sqrt(total);
+        data_q[db].norm = float16_t((rn > 1e-10) ? (gnrm_t4 / rn) : gnrm_t4);
+    }
+}
+
+#elif defined(SET_ROWS)
 
 void main() {
 #ifdef NEEDS_INIT_IQ_SHMEM
