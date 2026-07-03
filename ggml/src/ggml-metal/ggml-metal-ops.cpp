@@ -520,7 +520,6 @@ int ggml_metal_op_encode(ggml_metal_op_t ctx, int idx) {
 
 int ggml_metal_op_turbo_wht(ggml_metal_op_t, int) {
     GGML_ABORT("TURBO_WHT is not implemented for Metal");
-    return 0;
 }
 
 int ggml_metal_op_concat(ggml_metal_op_t ctx, int idx) {
