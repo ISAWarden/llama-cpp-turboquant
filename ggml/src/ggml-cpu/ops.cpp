@@ -10838,6 +10838,94 @@ void ggml_compute_forward_gated_delta_net(
     }
 }
 
+// ggml_compute_forward_turbo_wht
+
+static const float turbo_wht_s1[128] = {-1,1,1,-1,-1,1,-1,1,-1,-1,1,1,1,1,1,1,1,-1,1,-1,1,-1,-1,1,1,1,-1,1,1,-1,-1,-1,-1,1,1,-1,1,1,-1,1,-1,1,1,-1,-1,1,-1,1,1,1,1,-1,-1,-1,-1,-1,1,-1,1,1,1,1,-1,1,-1,-1,1,-1,-1,-1,1,-1,-1,-1,1,-1,-1,-1,1,1,1,-1,-1,1,1,1,-1,-1,1,1,-1,1,1,-1,1,-1,-1,1,1,-1,1,-1,1,-1,1,1,1,1,-1,1,-1,1,1,-1,1,1,-1,-1,-1,-1,-1,1,1,-1,1,1,-1,1};
+static const float turbo_wht_s2[128] = {1,1,1,1,-1,1,1,-1,1,-1,-1,-1,1,-1,-1,-1,1,1,-1,-1,1,-1,1,-1,1,-1,-1,1,-1,1,1,1,1,1,-1,-1,-1,1,-1,-1,-1,-1,-1,-1,1,1,1,-1,1,-1,1,1,1,-1,-1,1,-1,-1,-1,-1,-1,-1,1,1,1,-1,1,-1,-1,-1,-1,1,-1,1,-1,1,-1,-1,1,1,-1,1,-1,1,1,-1,1,-1,-1,-1,-1,1,-1,-1,1,-1,1,-1,1,1,1,-1,-1,1,-1,1,-1,1,1,-1,-1,1,-1,1,-1,1,1,-1,1,-1,1,-1,-1,-1,-1,-1,1,-1};
+
+static void ggml_compute_forward_turbo_wht_f32(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+    const ggml_tensor * src = dst->src[0];
+    const ggml_tensor * scale_tensor = dst->src[1];
+    const float * src_data = (const float *) src->data;
+    float * dst_data = (float *) dst->data;
+    const float * scale_inv = scale_tensor ? (const float *) scale_tensor->data : nullptr;
+
+    int direction;
+    int group_size;
+    memcpy(&direction, dst->op_params + 0, sizeof(int));
+    memcpy(&group_size, dst->op_params + sizeof(int), sizeof(int));
+
+    const float * s_first  = (direction == 0) ? turbo_wht_s1 : turbo_wht_s2;
+    const float * s_second = (direction == 0) ? turbo_wht_s2 : turbo_wht_s1;
+
+    const int64_t head_dim = src->ne[0];
+    const int64_t n_heads = src->ne[1] * src->ne[2] * src->ne[3];
+    const int64_t groups_per_head = head_dim / group_size;
+    const int64_t tail_size = head_dim - groups_per_head * group_size;
+    const int64_t total_groups = n_heads * groups_per_head;
+
+    const int ith = params->ith;
+    const int nth = params->nth;
+
+    const int64_t dr = (total_groups + nth - 1) / nth;
+    const int64_t g0 = dr * ith;
+    const int64_t g1 = std::min(g0 + dr, total_groups);
+
+    float tmp[128];
+
+    for (int64_t g = g0; g < g1; ++g) {
+        const int64_t head = g / groups_per_head;
+        const int64_t grp = g % groups_per_head;
+        const int64_t base = head * head_dim + grp * group_size;
+
+        for (int i = 0; i < group_size; ++i) {
+            float v = src_data[base + i] * s_first[i];
+            if (scale_inv) {
+                v *= scale_inv[i % 128];
+            }
+            tmp[i] = v;
+        }
+
+        for (int len = 1; len < group_size; len <<= 1) {
+            for (int i = 0; i < group_size; i += 2*len) {
+                for (int j = 0; j < len; ++j) {
+                    const float a = tmp[i + j];
+                    const float b = tmp[i + j + len];
+                    tmp[i + j] = a + b;
+                    tmp[i + j + len] = a - b;
+                }
+            }
+        }
+
+        const float norm = 1.0f / sqrtf((float) group_size);
+        for (int i = 0; i < group_size; ++i) {
+            dst_data[base + i] = tmp[i] * norm * s_second[i];
+        }
+    }
+
+    if (tail_size > 0 && ith == 0) {
+        const int64_t tail_offset = groups_per_head * group_size;
+        for (int64_t h = 0; h < n_heads; h++) {
+            const int64_t base = h * head_dim + tail_offset;
+            memcpy(dst_data + base, src_data + base, tail_size * sizeof(float));
+        }
+    }
+}
+
+void ggml_compute_forward_turbo_wht(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+    switch (dst->src[0]->type) {
+        case GGML_TYPE_F32:
+            ggml_compute_forward_turbo_wht_f32(params, dst);
+            break;
+        default:
+            GGML_ABORT("fatal error");
+    }
+}
+
 // ggml_compute_forward_rwkv_wkv7
 
 static void ggml_compute_forward_rwkv_wkv7_f32(

@@ -337,6 +337,10 @@ static int ggml_metal_op_encode_impl(ggml_metal_op_t ctx, int idx) {
             {
                 n_fuse = ggml_metal_op_gated_delta_net(ctx, idx);
             } break;
+        case GGML_OP_TURBO_WHT:
+            {
+                n_fuse = ggml_metal_op_turbo_wht(ctx, idx);
+            } break;
         case GGML_OP_SOLVE_TRI:
             {
                 n_fuse = ggml_metal_op_solve_tri(ctx, idx);

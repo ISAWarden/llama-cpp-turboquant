@@ -313,6 +313,15 @@ const std::vector<ggml_type> kv_cache_types = {
 };
 
 static ggml_type kv_cache_type_from_str(const std::string & s) {
+    if (s == "turbo2") {
+        return GGML_TYPE_TURBO2_0;
+    }
+    if (s == "turbo3") {
+        return GGML_TYPE_TURBO3_0;
+    }
+    if (s == "turbo4") {
+        return GGML_TYPE_TURBO4_0;
+    }
     for (const auto & type : kv_cache_types) {
         if (ggml_type_name(type) == s) {
             return type;
@@ -326,6 +335,7 @@ static std::string get_all_kv_cache_types() {
     for (const auto & type : kv_cache_types) {
         msg << ggml_type_name(type) << (&type == &kv_cache_types.back() ? "" : ", ");
     }
+    msg << " (aliases: turbo2, turbo3, turbo4)";
     return msg.str();
 }
 
@@ -1465,15 +1475,12 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_env("LLAMA_ARG_CHECKPOINT_MIN_SPACING_NT").set_examples({LLAMA_EXAMPLE_SERVER}));
     add_opt(common_arg(
-        {"--checkpoint-every-n-tokens"}, "N",
-        string_format("alias for --checkpoint-min-step (default: %d, 0 = no minimum)", params.checkpoint_min_step),
+        {"-cpent", "--checkpoint-every-n-tokens"}, "N",
+        string_format("create a checkpoint every n tokens during prefill (processing), -1 to disable (default: %d)", params.checkpoint_every_nt),
         [](common_params & params, int value) {
-            if (value < 0) {
-                throw std::invalid_argument("checkpoint-every-n-tokens must be non-negative");
-            }
-            params.checkpoint_min_step = value;
+            params.checkpoint_every_nt = value;
         }
-    ).set_env("LLAMA_ARG_CHECKPOINT_EVERY_NT").set_examples({LLAMA_EXAMPLE_SERVER}));
+    ).set_env("LLAMA_ARG_CHECKPOINT_EVERY_NT").set_examples({LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_CLI}));
     add_opt(common_arg(
         {"-cram", "--cache-ram"}, "N",
         string_format("set the maximum cache size in MiB (default: %d, -1 - no limit, 0 - disable)"

@@ -573,6 +573,7 @@ extern "C" {
         GGML_OP_RWKV_WKV7,
         GGML_OP_SOLVE_TRI,
         GGML_OP_GATED_DELTA_NET,
+        GGML_OP_TURBO_WHT,
 
         GGML_OP_UNARY,
 
@@ -2577,6 +2578,15 @@ extern "C" {
             struct ggml_tensor  * beta,
             struct ggml_tensor  * state,
             int64_t               K);
+
+    // TurboQuant Walsh-Hadamard transform for KV cache rotation.
+    // direction: 0 = forward, 1 = inverse. group_size: 0 = auto.
+    GGML_API struct ggml_tensor * ggml_turbo_wht(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            int                   direction,
+            int                   group_size,
+            struct ggml_tensor  * scale);
 
     // custom operators
 

@@ -3162,6 +3162,9 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
         case GGML_OP_GATED_DELTA_NET:
             ggml_cuda_op_gated_delta_net(ctx, dst);
             break;
+        case GGML_OP_TURBO_WHT:
+            ggml_cuda_turbo_wht(ctx, dst);
+            break;
         case GGML_OP_RWKV_WKV7:
             ggml_cuda_op_rwkv_wkv7(ctx, dst);
             break;
@@ -5505,6 +5508,7 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
         case GGML_OP_RWKV_WKV6:
         case GGML_OP_GATED_LINEAR_ATTN:
         case GGML_OP_RWKV_WKV7:
+        case GGML_OP_TURBO_WHT:
             return true;
         case GGML_OP_GATED_DELTA_NET:
             //TODO: enable once MUSA compiler is solved https://github.com/ggml-org/llama.cpp/pull/19504#issuecomment-4018634327

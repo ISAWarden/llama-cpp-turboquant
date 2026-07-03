@@ -1101,6 +1101,7 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "RWKV_WKV7",
     "SOLVE_TRI",
     "GATED_DELTA_NET",
+    "TURBO_WHT",
 
     "UNARY",
 
@@ -1118,7 +1119,7 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "GLU",
 };
 
-static_assert(GGML_OP_COUNT == 97, "GGML_OP_COUNT != 97");
+static_assert(GGML_OP_COUNT == 98, "GGML_OP_COUNT != 98");
 
 static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "none",
@@ -1212,6 +1213,7 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "rwkv_wkv7(r, w, k, v, a, b, s)",
     "A X = B, A triangular, solve X",
     "gated_delta_net(q, k, v, g, beta, s)",
+    "turbo_wht(a)",
 
     "unary(x)",
 
@@ -1229,7 +1231,7 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "glu(x)",
 };
 
-static_assert(GGML_OP_COUNT == 97, "GGML_OP_COUNT != 97");
+static_assert(GGML_OP_COUNT == 98, "GGML_OP_COUNT != 98");
 
 static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
 
@@ -6247,6 +6249,36 @@ struct ggml_tensor * ggml_solve_tri(
     result->op     = GGML_OP_SOLVE_TRI;
     result->src[0] = a;
     result->src[1] = b;
+
+    return result;
+}
+
+// ggml_turbo_wht
+
+struct ggml_tensor * ggml_turbo_wht(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        int                   direction,
+        int                   group_size,
+        struct ggml_tensor  * scale) {
+    GGML_ASSERT(ggml_is_contiguous(a));
+    GGML_ASSERT(a->type == GGML_TYPE_F32);
+    GGML_ASSERT(direction == 0 || direction == 1);
+
+    if (group_size == 0) {
+        group_size = (a->ne[0] % 128 == 0) ? 128 : 64;
+    }
+    GGML_ASSERT(group_size == 32 || group_size == 64 || group_size == 128);
+    GGML_ASSERT(a->ne[0] % group_size == 0);
+
+    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, 4, a->ne);
+
+    result->op = GGML_OP_TURBO_WHT;
+    result->src[0] = a;
+    result->src[1] = scale;
+
+    memcpy(result->op_params + 0, &direction, sizeof(int));
+    memcpy(result->op_params + sizeof(int), &group_size, sizeof(int));
 
     return result;
 }
