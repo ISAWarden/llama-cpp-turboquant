@@ -508,6 +508,42 @@ vec4 dequantize4(uint ib, uint iqs, uint a_offset) {
 }
 #endif
 
+#if defined(DATA_A_TURBO4_0)
+FLOAT_TYPE dequantize1(uint ib, uint iqs, uint a_offset) {
+    const float centroids[16] = float[16](
+        -0.173926, -0.117195, -0.089527, -0.068756,
+        -0.051262, -0.035597, -0.020989, -0.006938,
+         0.006938,  0.020989,  0.035597,  0.051262,
+         0.068756,  0.089527,  0.117195,  0.173926
+    );
+
+    const uint idx = (uint(data_a[a_offset + ib].qs[iqs / 2u]) >> ((iqs & 1u) * 4u)) & 0xFu;
+    return FLOAT_TYPE(centroids[idx]);
+}
+
+vec2 dequantize(uint ib, uint iqs, uint a_offset) {
+    return vec2(dequantize1(ib, iqs, a_offset), dequantize1(ib, iqs + 1u, a_offset));
+}
+
+vec4 dequantize4(uint ib, uint iqs, uint a_offset) {
+    const uint q0 = uint(data_a[a_offset + ib].qs[iqs / 2u]);
+    const uint q1 = uint(data_a[a_offset + ib].qs[iqs / 2u + 1u]);
+    const uint idx0 = q0 & 0xFu;
+    const uint idx1 = q0 >> 4u;
+    const uint idx2 = q1 & 0xFu;
+    const uint idx3 = q1 >> 4u;
+
+    const float centroids[16] = float[16](
+        -0.173926, -0.117195, -0.089527, -0.068756,
+        -0.051262, -0.035597, -0.020989, -0.006938,
+         0.006938,  0.020989,  0.035597,  0.051262,
+         0.068756,  0.089527,  0.117195,  0.173926
+    );
+
+    return vec4(centroids[idx0], centroids[idx1], centroids[idx2], centroids[idx3]);
+}
+#endif
+
 #if defined(DATA_A_F32) || defined(DATA_A_F16) || defined(DATA_A_BF16)
 vec2 get_dm(uint ib, uint a_offset) {
     return vec2(0, 0);
@@ -545,6 +581,12 @@ vec2 get_dm(uint ib, uint a_offset) {
 #if defined(DATA_A_NVFP4)
 vec2 get_dm(uint ib, uint a_offset) {
     return vec2(1.0, 0.0);
+}
+#endif
+
+#if defined(DATA_A_TURBO4_0)
+vec2 get_dm(uint ib, uint a_offset) {
+    return vec2(float(data_a[a_offset + ib].norm), 0.0);
 }
 #endif
 

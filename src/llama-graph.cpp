@@ -2430,7 +2430,8 @@ ggml_tensor * llm_graph_context::build_attn_mha(
                 if (!ggml_is_contiguous(cur)) {
                     cur = ggml_cont(ctx0, cur);
                 }
-                cur = ggml_turbo_wht(ctx0, cur, 1, turbo_group, nullptr);
+                ggml_tensor * innerq_scale = mctx ? mctx->get_turbo_innerq_scale_inv() : nullptr;
+                cur = ggml_turbo_wht(ctx0, cur, 1, turbo_group, innerq_scale);
                 cb(cur, "fattn_turbo_wht_inv", il);
             }
         }
@@ -2508,7 +2509,8 @@ ggml_tensor * llm_graph_context::build_attn_mha(
                 if (!ggml_is_contiguous(kqv)) {
                     kqv = ggml_cont(ctx0, kqv);
                 }
-                kqv = ggml_turbo_wht(ctx0, kqv, 1, turbo_group, nullptr);
+                ggml_tensor * innerq_scale = mctx ? mctx->get_turbo_innerq_scale_inv() : nullptr;
+                kqv = ggml_turbo_wht(ctx0, kqv, 1, turbo_group, innerq_scale);
                 cb(kqv, "kqv_turbo_wht_inv", il);
             }
         }
@@ -2701,7 +2703,8 @@ ggml_tensor * llm_graph_context::build_attn(
         if (!ggml_is_contiguous(q)) {
             q = ggml_cont(ctx0, q);
         }
-        q = ggml_turbo_wht(ctx0, q, 0, 0, nullptr);
+        ggml_tensor * innerq_scale = mctx_cur->get_turbo_innerq_scale_inv();
+        q = ggml_turbo_wht(ctx0, q, 0, 0, innerq_scale);
         cb(q, "q_turbo_wht", il);
     }
 
@@ -2817,7 +2820,8 @@ ggml_tensor * llm_graph_context::build_attn(
         if (!ggml_is_contiguous(q)) {
             q = ggml_cont(ctx0, q);
         }
-        q = ggml_turbo_wht(ctx0, q, 0, 0, nullptr);
+        ggml_tensor * innerq_scale = mctx_cur->get_turbo_innerq_scale_inv();
+        q = ggml_turbo_wht(ctx0, q, 0, 0, innerq_scale);
         cb(q, "q_turbo_wht", il);
     }
 
@@ -3006,7 +3010,8 @@ ggml_tensor * llm_graph_context::build_attn(
         if (!ggml_is_contiguous(q)) {
             q = ggml_cont(ctx0, q);
         }
-        q = ggml_turbo_wht(ctx0, q, 0, 0, nullptr);
+        ggml_tensor * innerq_scale = mctx_cur->get_turbo_innerq_scale_inv();
+        q = ggml_turbo_wht(ctx0, q, 0, 0, innerq_scale);
         cb(q, "q_turbo_wht", il);
     }
 

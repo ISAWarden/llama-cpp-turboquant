@@ -119,6 +119,15 @@ layout (binding = 1) readonly buffer K_PACKED_Q5_1_P32 { block_q5_1_packed32 dat
     return norm * FLOAT_TYPEV4(TC4[q0 & 0xFu], TC4[q0 >> 4], TC4[q1 & 0xFu], TC4[q1 >> 4]);       \
 }
 
+#if defined(DATA_A_TURBO4_0)
+FLOAT_TYPEV4 dequantize4(uint ib, uint iqs, uint a_offset, uint binding_idx) {
+    if (binding_idx == BINDING_IDX_K) {
+        FA_DEQUANT4_TURBO4_0(k_packed_turbo4_0)
+    } else {
+        FA_DEQUANT4_TURBO4_0(v_packed_turbo4_0)
+    }
+}
+#else
 FLOAT_TYPEV4 dequantize4(uint ib, uint iqs, uint a_offset, uint binding_idx) {
     if (binding_idx == BINDING_IDX_K) {
         switch (FaTypeK) {
@@ -145,3 +154,4 @@ FLOAT_TYPEV4 dequantize4(uint ib, uint iqs, uint a_offset, uint binding_idx) {
     }
     return FLOAT_TYPEV4(0);
 }
+#endif

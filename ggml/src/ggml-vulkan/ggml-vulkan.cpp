@@ -851,6 +851,7 @@ struct vk_device_struct {
     vk_pipeline pipeline_rms_norm_mul_rope_f32_f16;
     vk_pipeline pipeline_rms_norm_back_f32;
     vk_pipeline pipeline_l2_norm_f32;
+    vk_pipeline pipeline_turbo_wht_f32;
 
     // [src/dst 0=fp32,1=fp16]
     vk_pipeline pipeline_exp[2];
@@ -3520,6 +3521,10 @@ static vk_fa_tuning_params get_fa_tuning_params(const vk_device& device, uint32_
     FaCodePath path = device->coopmat2 ? FA_COOPMAT2 :
                       device->coopmat1_fa_support ? FA_COOPMAT1 : FA_SCALAR;
 
+    if (k_type == GGML_TYPE_TURBO4_0 || v_type == GGML_TYPE_TURBO4_0) {
+        path = FA_SCALAR;
+    }
+
     if (path == FA_COOPMAT2 && k_type == GGML_TYPE_BF16 && !device->coopmat2_bf16_support) {
         path = FA_COOPMAT1;
     }
@@ -4135,6 +4140,7 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
         const bool fa_ds = fa.first.subgroup_size == 0;
 
         const bool bf16_kv = fa.first.k_type == GGML_TYPE_BF16;
+        const bool turbo4_kv = fa.first.k_type == GGML_TYPE_TURBO4_0 && fa.first.v_type == GGML_TYPE_TURBO4_0;
         const bool use_mmq = ggml_vk_fa_scalar_uses_mmq(device, fa.first.k_type);
         const void * spv_data = nullptr;
         size_t spv_size = 0;
@@ -4143,6 +4149,15 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
             spv_data = flash_attn_f32_f16_fp32_data;
             spv_size = flash_attn_f32_f16_fp32_len;
             name = aligned ? "flash_attn_f32_bf16_aligned" : "flash_attn_f32_bf16";
+        } else if (turbo4_kv) {
+            if (device->fp16) {
+                if (f32acc) { spv_data = flash_attn_f32_f16_turbo4_0_data;        spv_size = flash_attn_f32_f16_turbo4_0_len; }
+                else        { spv_data = flash_attn_f32_f16_turbo4_0_f16acc_data; spv_size = flash_attn_f32_f16_turbo4_0_f16acc_len; }
+            } else {
+                spv_data = flash_attn_f32_f16_turbo4_0_fp32_data;
+                spv_size = flash_attn_f32_f16_turbo4_0_fp32_len;
+            }
+            name = aligned ? "flash_attn_f32_f16_aligned_turbo4_0" : "flash_attn_f32_f16_turbo4_0";
         } else if (use_mmq) {
 #if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
             if (device->fp16) {
@@ -5110,6 +5125,7 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
 
     ggml_vk_create_pipeline(device, device->pipeline_rms_norm_back_f32, "rms_norm_back_f32", rms_norm_back_f32_len, rms_norm_back_f32_data, "main", 3, sizeof(vk_op_push_constants), {1, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_l2_norm_f32, "l2_norm_f32", l2_norm_f32_len, l2_norm_f32_data, "main", 2, sizeof(vk_op_unary_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_turbo_wht_f32, "turbo_wht_f32", turbo_wht_f32_len, turbo_wht_f32_data, "main", 2, 3*sizeof(uint32_t), {128, 1, 1}, {}, 1, true);
 
     ggml_vk_create_pipeline(device, device->pipeline_cpy_f32_f32, "cpy_f32_f32", cpy_f32_f32_len, cpy_f32_f32_data, "main", 2, sizeof(vk_op_unary_push_constants), {512, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_cpy_f32_f16, "cpy_f32_f16", cpy_f32_f16_len, cpy_f32_f16_data, "main", 2, sizeof(vk_op_unary_push_constants), {512, 1, 1}, {}, 1);
@@ -10764,6 +10780,11 @@ static vk_pipeline ggml_vk_op_get_pipeline(ggml_backend_vk_context * ctx, const 
             return ctx->device->pipeline_l2_norm_f32;
         }
         return nullptr;
+    case GGML_OP_TURBO_WHT:
+        if (src0->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32) {
+            return ctx->device->pipeline_turbo_wht_f32;
+        }
+        return nullptr;
     case GGML_OP_UNARY:
         if ((src0->type != GGML_TYPE_F32 && src0->type != GGML_TYPE_F16) ||
             (dst->type != GGML_TYPE_F32 && dst->type != GGML_TYPE_F16) ||
@@ -11396,6 +11417,19 @@ static void ggml_vk_op_f32(ggml_backend_vk_context * ctx, vk_context& subctx, co
                 elements = { nr, 1, 1 };
             }
         } break;
+    case GGML_OP_TURBO_WHT:
+        {
+            int group_size;
+            memcpy(&group_size, dst->op_params + sizeof(int), sizeof(int));
+            const uint32_t groups = (uint32_t) (ggml_nelements(src0) / group_size);
+            if (groups > 262144) {
+                elements = { 512u * (uint32_t) group_size, 512u, CEIL_DIV(groups, 262144u) };
+            } else if (groups > 512) {
+                elements = { 512u * (uint32_t) group_size, CEIL_DIV(groups, 512u), 1 };
+            } else {
+                elements = { groups * (uint32_t) group_size, 1, 1 };
+            }
+        } break;
     case GGML_OP_SOLVE_TRI:
         {
             uint32_t nr = (uint32_t)(ne02 * ne03);
@@ -11620,7 +11654,11 @@ static void ggml_vk_op_f32(ggml_backend_vk_context * ctx, vk_context& subctx, co
     case GGML_OP_SET_ROWS:
         {
             uint32_t ne = ggml_nelements(src0);
-            if (ggml_is_quantized(dst->type)) {
+            if (dst->type == GGML_TYPE_TURBO2_0 ||
+                dst->type == GGML_TYPE_TURBO3_0 ||
+                dst->type == GGML_TYPE_TURBO4_0) {
+                ne = ne / 128;
+            } else if (ggml_is_quantized(dst->type)) {
                 // quants run 32 threads each doing QUANT_K elements
                 ne = CEIL_DIV(ne, 32 * ggml_blck_size(dst->type));
             } else {
@@ -12640,6 +12678,42 @@ static void ggml_vk_l2_norm(ggml_backend_vk_context * ctx, vk_context& subctx, c
     vk_op_unary_push_constants p = vk_op_unary_push_constants_init(src0, dst);
     p.param1 = op_params[0];
     ggml_vk_op_f32<vk_op_unary_push_constants>(ctx, subctx, src0, nullptr, nullptr, nullptr, dst, GGML_OP_L2_NORM, std::move(p));
+}
+
+static void ggml_vk_turbo_wht(ggml_backend_vk_context * ctx, vk_context& subctx, const ggml_tensor * src0, ggml_tensor * dst) {
+    int direction;
+    int group_size;
+    memcpy(&direction,  dst->op_params + 0,           sizeof(int));
+    memcpy(&group_size, dst->op_params + sizeof(int), sizeof(int));
+
+    struct {
+        uint32_t ne;
+        uint32_t direction;
+        uint32_t group_size;
+    } pc = {
+        (uint32_t) ggml_nelements(src0),
+        (uint32_t) direction,
+        (uint32_t) group_size,
+    };
+
+    vk_pipeline pipeline = ctx->device->pipeline_turbo_wht_f32;
+    GGML_ASSERT(pipeline != nullptr);
+    ggml_pipeline_request_descriptor_sets(ctx, pipeline, 1);
+
+    vk_subbuffer src_buf = ggml_vk_tensor_subbuffer(ctx, src0, false);
+    vk_subbuffer dst_buf = ggml_vk_tensor_subbuffer(ctx, dst,  false);
+
+    const uint32_t n_groups = pc.ne / (uint32_t) group_size;
+    std::array<uint32_t, 3> elements;
+    if (n_groups > 262144) {
+        elements = {512u * (uint32_t) group_size, 512u, CEIL_DIV(n_groups, 262144u)};
+    } else if (n_groups > 512) {
+        elements = {512u * (uint32_t) group_size, CEIL_DIV(n_groups, 512u), 1};
+    } else {
+        elements = {pc.ne, 1, 1};
+    }
+
+    ggml_vk_dispatch_pipeline(ctx, subctx, pipeline, {src_buf, dst_buf}, pc, elements);
 }
 
 static void ggml_vk_unary(ggml_backend_vk_context * ctx, vk_context& subctx, const ggml_tensor * src0, ggml_tensor * dst) {
@@ -14770,6 +14844,10 @@ static bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgr
         break;
     case GGML_OP_L2_NORM:
         ggml_vk_l2_norm(ctx, compute_ctx, src0, node);
+
+        break;
+    case GGML_OP_TURBO_WHT:
+        ggml_vk_turbo_wht(ctx, compute_ctx, src0, node);
 
         break;
     case GGML_OP_UNARY:
@@ -17472,6 +17550,8 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
         case GGML_OP_NORM:
         case GGML_OP_L2_NORM:
             return op->src[0]->type == GGML_TYPE_F32 && op->type == GGML_TYPE_F32;
+        case GGML_OP_TURBO_WHT:
+            return ggml_is_contiguous(op->src[0]) && op->src[0]->type == GGML_TYPE_F32 && op->type == GGML_TYPE_F32;
         case GGML_OP_ADD:
         case GGML_OP_SUB:
         case GGML_OP_MUL:
@@ -18331,6 +18411,10 @@ static void ggml_vk_check_results_0(ggml_backend_vk_context * ctx, ggml_cgraph *
         } else if (tensor->op == GGML_OP_L2_NORM) {
             const float eps = ((float *) tensor->op_params)[0];
             tensor_clone = ggml_l2_norm(ggml_ctx, src_clone[0], eps);
+        } else if (tensor->op == GGML_OP_TURBO_WHT) {
+            const int direction = ggml_get_op_params_i32(tensor, 0);
+            const int group_size = ggml_get_op_params_i32(tensor, 1);
+            tensor_clone = ggml_turbo_wht(ggml_ctx, src_clone[0], direction, group_size, src_clone[1]);
         } else if (tensor->op == GGML_OP_SOFT_MAX) {
             if (tensor->src[1] != nullptr) {
                 const float * params = (const float *)tensor->op_params;

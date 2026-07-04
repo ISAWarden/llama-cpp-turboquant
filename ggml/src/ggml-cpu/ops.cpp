@@ -12,6 +12,10 @@
 #include <cfloat>
 #include <cmath>
 
+extern "C" {
+GGML_API void ggml_turbo_set_cpu_wht_group_size(int group_size);
+}
+
 // ggml_compute_forward_dup
 
 static void ggml_compute_forward_dup_same_cont(
@@ -5048,6 +5052,12 @@ static void ggml_compute_forward_set_rows_f32(
     const int64_t ir1 = std::min(ir0 + dr, nr);
 
     ggml_from_float_t const from_float = ggml_get_type_traits_cpu(dst->type)->from_float;
+
+    if (dst->type == GGML_TYPE_TURBO2_0 || dst->type == GGML_TYPE_TURBO3_0 || dst->type == GGML_TYPE_TURBO4_0) {
+        int gs = 0;
+        memcpy(&gs, dst->op_params, sizeof(int));
+        ggml_turbo_set_cpu_wht_group_size(gs);
+    }
 
     for (int64_t i03 = 0; i03 < ne03; ++i03) {
         for (int64_t i02 = 0; i02 < ne02; ++i02) {
